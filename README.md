@@ -63,6 +63,15 @@ A browser-based map editor for tabletop RPG terrain built with the [OpenLOCK](ht
 
 ---
 
+## Tested Model Collections
+
+These OpenLOCK-compatible packs work well with CaveForge (Cave, Dungeon, Wooden, Sewer packs tested):
+
+- [Together3D Collections on MakerWorld](https://makerworld.com/en/@Together3D/collections)
+- [OpenForge SinglePrint Collection](https://makerworld.com/en/collections/2702727-openforge-singleprint)
+
+---
+
 ## Tech Stack
 
 | Layer | Library |
