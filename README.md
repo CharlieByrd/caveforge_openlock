@@ -42,8 +42,7 @@ A browser-based map editor for tabletop RPG terrain built with the [OpenLOCK](ht
 - CSV and JSON export
 
 ### Print Export
-- **Format A — ZIP with originals:** each tile type as its original STL file + `manifest.json` with quantities
-- **Format B — merged STL:** all copies concatenated into one file (coordinates unchanged)
+- ZIP with originals: each tile type as its original STL file + `manifest.json` with quantities
 - Split across N printers with balanced distribution
 - Web Worker processing with progress bar — never blocks the UI
 
