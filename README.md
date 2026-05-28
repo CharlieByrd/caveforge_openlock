@@ -1,73 +1,102 @@
-# React + TypeScript + Vite
+# CaveForge — OpenLOCK Tile Editor
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A browser-based map editor for tabletop RPG terrain built with the [OpenLOCK](https://www.printablescenery.com/openlock/) system. Import your own STL files, lay out tiles on a grid, preview in 3D, calculate your bill of materials, and export print-ready files — all offline, all in the browser.
 
-Currently, two official plugins are available:
+**Live demo:** https://charliebyrd.github.io/caveforge_openlock/
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+---
 
-## React Compiler
+## Features
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### STL Library
+- Import STL files by folder or individual files
+- Automatic pack/category detection from folder structure
+- Auto-calculated footprint (in OpenLOCK grid cells) and height class (`floor` / `wall` / `prop`)
+- SHA-256 deduplication — same STL stored once regardless of how many categories reference it
+- Pre-rendered top-down and isometric icons generated from the actual geometry
 
-## Expanding the ESLint configuration
+### Assets Management
+- Browse packs and categories in a navigator panel
+- Drag tiles between packs and categories
+- Reorder tiles within a category by dragging
+- Inline tile editing: name, pack, category, footprint, height class, inventory count
+- Rename and delete packs
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### 2D Grid Editor
+- Click or drag to place tiles; right-click to erase
+- Collision detection — tiles cannot overlap
+- Rotate selected tile with `R` (0 / 90 / 180 / 270°)
+- Pan with Space+drag or middle mouse; zoom with scroll wheel
+- Undo / Redo (`Cmd+Z` / `Cmd+Shift+Z`, 50-step history)
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+### 3D Preview
+- Real-time Three.js render of the full map using actual STL geometry
+- InstancedMesh for high-performance rendering of 500+ placements
+- Adjustable lighting, contrast, brightness, saturation, and fog (settings saved automatically)
+- Orbit camera with smooth controls
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+### Bill of Materials (BOM)
+- Per-tile count of required vs. in-stock vs. to-print
+- OpenLOCK clip count based on shared tile edges
+- Inventory toggle to temporarily ignore stock
+- CSV and JSON export
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+### Print Export
+- **Format A — ZIP with originals:** each tile type as its original STL file + `manifest.json` with quantities
+- **Format B — merged STL:** all copies concatenated into one file (coordinates unchanged)
+- Split across N printers with balanced distribution
+- Web Worker processing with progress bar — never blocks the UI
+
+### Schematic Export
+- Top-down plan view rendered to canvas with chess-style coordinate labels (A1, B2…)
+- Color-coded by category with legend
+- Export as PNG or SVG
+- Adjustable cell size
+
+### Map Sharing
+- **Export Map Pack:** bundles the current map + all STL tiles it uses into a single `.zip` archive
+- **Import Map Pack:** loads the archive on another machine, deduplicates tiles by hash, and switches to the imported map
+
+### Multiple Maps
+- Create, rename, and switch between maps
+- All maps persist in the browser's IndexedDB
+
+---
+
+## Tech Stack
+
+| Layer | Library |
+|---|---|
+| UI | React 18 + TypeScript |
+| Build | Vite |
+| 3D | Three.js |
+| State | Zustand |
+| Storage | IndexedDB via `idb` |
+| ZIP | JSZip |
+| Tests | Vitest |
+
+No backend. No server. Works offline after first load.
+
+---
+
+## Local Development
+
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Then open http://localhost:5173.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run build   # production build
+npm test        # run unit tests
 ```
+
+---
+
+## OpenLOCK Grid
+
+- 1 cell = **25.4 mm** (1 inch)
+- STL files are stored and exported **byte-for-byte unchanged** — geometry is parsed only for bbox measurement and rendering
+- Parse errors are reported clearly; invalid files are never added to the library
