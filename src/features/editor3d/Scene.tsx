@@ -113,7 +113,11 @@ function resolvePropY(p: Placement, cellTopY: Map<string, number>): number {
       if (h !== undefined) return h;
     }
   }
-  return 0;
+  // No floor nearby — snap to lowest floor on scene
+  if (cellTopY.size === 0) return 0;
+  let min = Infinity;
+  for (const v of cellTopY.values()) if (v < min) min = v;
+  return min;
 }
 
 export function Scene({ active }: { active: boolean }) {
