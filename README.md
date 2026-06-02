@@ -8,6 +8,38 @@ Everything runs in the browser. Your models and designs never leave your compute
 
 ---
 
+## Quick Start
+
+### 1. Import your STL collection
+Open the **Assets** tab (top navigation bar) → click **Import STL** → choose **Browse Files** to pick individual STLs or **Browse Folder** to import a whole directory at once. You can also drag and drop files directly onto the import area.
+
+After selecting files, CaveForge asks which collection (pack) to add them to — pick an existing one or type a name to create a new one. Categories are detected automatically from your folder structure.
+
+### 2. Build your map
+Switch to the **Editor** tab. Your tiles appear in the left sidebar, organized by pack and category. Click a tile to select it, then click or drag on the grid to place it. Right-click to erase.
+
+- Press **R** (or use the rotation buttons in the toolbar) to rotate the selected tile: 0° / 90° / 180° / 270°
+- Use the **Undo / Redo** buttons in the toolbar (or `Cmd+Z` / `Cmd+Shift+Z`)
+- Pan the grid with Space+drag or middle mouse; zoom with the scroll wheel
+
+### 3. Preview in 3D
+Use the view switcher in the Editor toolbar (**2D** / **Split** / **3D** / **BOM**):
+- **Split** — 2D grid on the left, 3D preview on the right, side by side
+- **3D** — full 3D view; drag to orbit, use the top-down toggle (bottom-right of the 3D pane) to switch to overhead view
+- Click **Render** (top-right of the Editor toolbar, slider icon) to open lighting and color controls
+
+### 4. Check what to print
+Switch to **BOM** in the Editor toolbar to see the bill of materials — how many of each tile the map needs, how many you already have in stock, and how many are left to print. Enter your inventory counts in the **Assets** tab (tile detail panel) or directly in the BOM table.
+
+### 5. Export
+Go to the **Export** tab:
+- **Print files** — downloads a ZIP with each needed STL and a quantities manifest; split across multiple printers if needed
+- **Share pack** — bundles the map and all its STLs into one archive to share with someone else
+
+The **Schematic** tab generates a printable top-down map diagram (PNG or SVG).
+
+---
+
 ## Features
 
 ### STL Library
