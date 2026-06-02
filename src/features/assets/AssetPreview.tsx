@@ -24,6 +24,7 @@ export function AssetPreview({ tile, rx, ry, rz, offsetY }: Props) {
     controls: OrbitControls;
     mesh: THREE.Mesh | null;
     rafId: number;
+    needsRender: boolean;
   } | null>(null);
 
   // Cached base geometry for the current stlBlobKey (no transform applied)
@@ -50,7 +51,7 @@ export function AssetPreview({ tile, rx, ry, rz, offsetY }: Props) {
     dir.position.set(5, 8, 5);
     scene.add(dir);
 
-    // Faint ground grid for reference
+    // Faint ground grid for reference (stored for disposal on unmount)
     const grid = new THREE.GridHelper(10, 10, 0x333355, 0x222244);
     scene.add(grid);
 
@@ -62,14 +63,20 @@ export function AssetPreview({ tile, rx, ry, rz, offsetY }: Props) {
     controls.target.set(0, 0.5, 0);
     controls.update();
 
-    const t = threeRef.current = { renderer, scene, camera, controls, mesh: null, rafId: 0 };
+    const t: NonNullable<typeof threeRef.current> = { renderer, scene, camera, controls, mesh: null, rafId: 0, needsRender: true };
+    threeRef.current = t;
 
     function animate() {
       t.rafId = requestAnimationFrame(animate);
+      if (!t.needsRender) return;
+      t.needsRender = false;
       controls.update();
       renderer.render(scene, camera);
     }
     animate();
+
+    // Re-render on orbit/pan/zoom
+    controls.addEventListener('change', () => { t.needsRender = true; });
 
     const ro = new ResizeObserver(() => {
       const w = mount.clientWidth;
@@ -78,6 +85,7 @@ export function AssetPreview({ tile, rx, ry, rz, offsetY }: Props) {
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
+      t.needsRender = true;
     });
     ro.observe(mount);
 
@@ -85,6 +93,11 @@ export function AssetPreview({ tile, rx, ry, rz, offsetY }: Props) {
       cancelAnimationFrame(t.rafId);
       ro.disconnect();
       controls.dispose();
+      grid.geometry.dispose();
+      (Array.isArray(grid.material)
+        ? (grid.material as THREE.Material[])
+        : [grid.material as THREE.Material]
+      ).forEach((m) => m.dispose());
       renderer.dispose();
       threeRef.current = null;
       baseGeoRef.current?.dispose();
@@ -113,6 +126,7 @@ export function AssetPreview({ tile, rx, ry, rz, offsetY }: Props) {
       if (!cancelled) {
         swapMesh(baseGeoRef.current);
         fitCamera(baseGeoRef.current);
+        if (threeRef.current) threeRef.current.needsRender = true;
       }
     }
 
@@ -122,7 +136,10 @@ export function AssetPreview({ tile, rx, ry, rz, offsetY }: Props) {
 
   // Effect B: apply transform on cached base geo (no IDB read, no STL re-parse)
   useEffect(() => {
-    if (baseGeoRef.current) swapMesh(baseGeoRef.current);
+    if (baseGeoRef.current) {
+      swapMesh(baseGeoRef.current);
+      if (threeRef.current) threeRef.current.needsRender = true;
+    }
   }, [rx, ry, rz, offsetY]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function swapMesh(baseGeo: THREE.BufferGeometry) {

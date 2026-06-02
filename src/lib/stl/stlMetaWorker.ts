@@ -3,6 +3,14 @@ import type { StlMetaRequest, StlMetaResult } from '../../workers/stlMetaWorker'
 let _worker: Worker | null = null;
 const pending = new Map<string, (result: StlMetaResult) => void>();
 
+function settleAllPending(errorMsg: string) {
+  for (const [id, cb] of pending) {
+    cb({ id, error: errorMsg });
+  }
+  pending.clear();
+  _worker = null; // reset so next call recreates the worker
+}
+
 function getWorker(): Worker {
   if (_worker) return _worker;
   _worker = new Worker(new URL('../../workers/stlMetaWorker.ts', import.meta.url), { type: 'module' });
@@ -13,6 +21,8 @@ function getWorker(): Worker {
       cb(e.data);
     }
   };
+  _worker.onerror = () => settleAllPending('STL meta worker crashed');
+  _worker.onmessageerror = () => settleAllPending('STL meta worker message error');
   return _worker;
 }
 

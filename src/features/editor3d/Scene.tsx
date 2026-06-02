@@ -8,8 +8,15 @@ import { loadSTLBlob } from '../../lib/db/blobs';
 import { rotateFootprint, rotToRad } from '../../lib/grid/transform';
 import { buildGeometry, applyModelTransform, SCALE } from '../../lib/three/geometry';
 import type { TileType } from '../../lib/db/schema';
+import type { Placement } from '../../lib/db/schema';
 
 const FRUSTUM = 24;
+
+interface MeshEntry {
+  mesh: THREE.Mesh;
+  orientKey: string;
+  sig: string;
+}
 
 interface SceneState {
   renderer: THREE.WebGLRenderer;
@@ -24,6 +31,69 @@ interface SceneState {
   fog: THREE.FogExp2;
   mode: 'persp' | 'ortho';
   rafId: number;
+  // On-demand rendering (P1)
+  needsRender: boolean;
+  // Persistent geometry/material caches across rebuilds (P0 + L1)
+  geoTemplates: Map<string, THREE.BufferGeometry>;     // orientKey → template
+  geoTemplateRefs: Map<string, Set<string>>;            // orientKey → Set<uid>
+  matCache: Map<string, THREE.MeshStandardMaterial>;   // tileTypeId → material
+  meshByUid: Map<string, MeshEntry>;
+}
+
+// Compute a per-placement geometry signature. Changing any field forces a mesh rebuild.
+function placementSig(p: Placement, tt: TileType, maxTriangles: number): string {
+  const mt = tt.modelTransform;
+  return [
+    p.uid, p.tileTypeId, p.gx, p.gy, p.rot,
+    tt.stlBlobKey,
+    mt?.rx ?? 0, mt?.ry ?? 0, mt?.rz ?? 0, mt?.offsetY ?? 0,
+    tt.footprint.w, tt.footprint.h, tt.sizeMM.z,
+    tt.isProp ? 1 : 0, tt.heightClass,
+    maxTriangles,
+  ].join(',');
+}
+
+// Key for a geometry template (same STL + same rotation bake = same template).
+function toOrientKey(tt: TileType): string {
+  const mt = tt.modelTransform;
+  return mt
+    ? `${tt.stlBlobKey}|${mt.rx}|${mt.ry}|${mt.rz}`
+    : tt.stlBlobKey;
+}
+
+// Build cellTopY map from floor placements.
+function buildCellTopY(
+  placements: Placement[],
+  ttMap: Map<string, TileType>,
+): Map<string, number> {
+  const cellTopY = new Map<string, number>();
+  for (const p of placements) {
+    const tt = ttMap.get(p.tileTypeId);
+    if (!tt || tt.isProp || tt.heightClass !== 'floor') continue;
+    const eff = rotateFootprint(tt.footprint, p.rot);
+    const topY = tt.sizeMM.z * SCALE;
+    for (let dx = 0; dx < eff.w; dx++) {
+      for (let dy = 0; dy < eff.h; dy++) {
+        const key = `${p.gx + dx},${p.gy + dy}`;
+        cellTopY.set(key, Math.max(cellTopY.get(key) ?? 0, topY));
+      }
+    }
+  }
+  return cellTopY;
+}
+
+// Resolve the Y position for a prop given cellTopY.
+function resolvePropY(p: Placement, cellTopY: Map<string, number>): number {
+  const direct = cellTopY.get(`${p.gx},${p.gy}`);
+  if (direct !== undefined) return direct;
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      if (dx === 0 && dy === 0) continue;
+      const h = cellTopY.get(`${p.gx + dx},${p.gy + dy}`);
+      if (h !== undefined) return h;
+    }
+  }
+  return 0;
 }
 
 export function Scene({ active }: { active: boolean }) {
@@ -36,13 +106,11 @@ export function Scene({ active }: { active: boolean }) {
   const { tileTypes } = useLibraryStore();
   const renderSettings = useRenderStore();
 
-  // Keep activeRef in sync; flush one render frame when becoming visible
+  // Keep activeRef in sync; flush one render when becoming visible
   useEffect(() => {
     activeRef.current = active;
     if (active && stateRef.current) {
-      const s = stateRef.current;
-      const cam = s.mode === 'ortho' ? s.orthoCam : s.perspCam;
-      s.renderer.render(s.scene, cam);
+      stateRef.current.needsRender = true;
     }
   }, [active]);
 
@@ -103,12 +171,23 @@ export function Scene({ active }: { active: boolean }) {
       perspCtrl, orthoCtrl, meshGroup,
       ambientLight, dirLight, fog,
       mode: 'persp', rafId: 0,
+      needsRender: true,
+      geoTemplates: new Map(),
+      geoTemplateRefs: new Map(),
+      matCache: new Map(),
+      meshByUid: new Map(),
     };
     stateRef.current = s;
 
+    // On-demand render: re-render whenever controls move (P1)
+    function requestRender() { s.needsRender = true; }
+    perspCtrl.addEventListener('change', requestRender);
+    orthoCtrl.addEventListener('change', requestRender);
+
     function animate() {
       s.rafId = requestAnimationFrame(animate);
-      if (!activeRef.current) return; // skip render when hidden
+      if (!activeRef.current || !s.needsRender) return;
+      s.needsRender = false;
       if (s.mode === 'ortho') { orthoCtrl.update(); renderer.render(scene, orthoCam); }
       else                    { perspCtrl.update();  renderer.render(scene, perspCam);  }
     }
@@ -127,6 +206,7 @@ export function Scene({ active }: { active: boolean }) {
       orthoCam.bottom = -FRUSTUM / 2;
       orthoCam.updateProjectionMatrix();
       renderer.setSize(w, h);
+      s.needsRender = true;
     });
     ro.observe(mount);
 
@@ -135,14 +215,15 @@ export function Scene({ active }: { active: boolean }) {
       ro.disconnect();
       perspCtrl.dispose();
       orthoCtrl.dispose();
-      // Dispose all GPU-resident buffers before releasing the WebGL context
-      s.scene.traverse(obj => {
-        if (obj instanceof THREE.Mesh) {
-          obj.geometry.dispose();
-          if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
-          else (obj.material as THREE.Material).dispose();
-        }
-      });
+      // Dispose all persistent geometry/material caches (P0 + L1)
+      for (const geo of s.geoTemplates.values()) geo.dispose();
+      for (const mat of s.matCache.values()) mat.dispose();
+      for (const { mesh } of s.meshByUid.values()) mesh.geometry.dispose();
+      s.geoTemplates.clear();
+      s.geoTemplateRefs.clear();
+      s.matCache.clear();
+      s.meshByUid.clear();
+      // Dispose renderer WebGL context
       renderer.dispose();
       stateRef.current = null;
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
@@ -173,61 +254,117 @@ export function Scene({ active }: { active: boolean }) {
     }).sort().join('|');
   }, [map.placements, tileTypes]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ---- Mesh rebuild on geometry-relevant changes only -----------------------
+  // Track previous maxTriangles to detect changes that require full template purge
+  const prevMaxTriRef = useRef<number>(renderSettings.maxTriangles);
+
+  // ---- Incremental mesh rebuild — diff by placement uid (P0 + L1) ----------------
   useEffect(() => {
     const s = stateRef.current;
     if (!s) return;
 
-    s.meshGroup.traverse(obj => {
-      if (obj instanceof THREE.Mesh) {
-        obj.geometry.dispose();
-        (obj.material as THREE.Material).dispose();
-      }
-    });
-    s.meshGroup.clear();
-
     const ttMap = ttMapRef.current;
+    const maxTriangles = renderSettings.maxTriangles;
 
-    // For each grid cell, track the highest tile top (world units) so props can sit on top
-    const cellTopY = new Map<string, number>();
+    // If maxTriangles changed, all templates are stale → purge everything for full rebuild
+    if (prevMaxTriRef.current !== maxTriangles) {
+      prevMaxTriRef.current = maxTriangles;
+      for (const geo of s.geoTemplates.values()) geo.dispose();
+      for (const { mesh } of s.meshByUid.values()) {
+        s.meshGroup.remove(mesh);
+        mesh.geometry.dispose();
+      }
+      s.geoTemplates.clear();
+      s.geoTemplateRefs.clear();
+      s.meshByUid.clear();
+      // Materials are still valid — just the geometry poly count changed
+    }
+
+    // 1. Compute new per-placement sigs
+    interface PlacementInfo {
+      p: Placement;
+      tt: TileType;
+      sig: string;
+      ok: string; // orientKey
+    }
+    const newInfos = new Map<string, PlacementInfo>();
     for (const p of map.placements) {
       const tt = ttMap.get(p.tileTypeId);
-      if (!tt || tt.isProp || tt.heightClass !== 'floor') continue;
-      const eff = rotateFootprint(tt.footprint, p.rot);
-      const topY = tt.sizeMM.z * SCALE;
-      for (let dx = 0; dx < eff.w; dx++) {
-        for (let dy = 0; dy < eff.h; dy++) {
-          const key = `${p.gx + dx},${p.gy + dy}`;
-          cellTopY.set(key, Math.max(cellTopY.get(key) ?? 0, topY));
+      if (!tt) continue;
+      newInfos.set(p.uid, {
+        p, tt,
+        sig: placementSig(p, tt, maxTriangles),
+        ok: toOrientKey(tt),
+      });
+    }
+
+    // 2. Remove stale meshes (uid gone or sig changed)
+    for (const [uid, entry] of s.meshByUid) {
+      const info = newInfos.get(uid);
+      if (!info || info.sig !== entry.sig) {
+        s.meshGroup.remove(entry.mesh);
+        entry.mesh.geometry.dispose();
+        // Decref template
+        const refs = s.geoTemplateRefs.get(entry.orientKey);
+        if (refs) {
+          refs.delete(uid);
+          if (refs.size === 0) {
+            s.geoTemplates.get(entry.orientKey)?.dispose();
+            s.geoTemplates.delete(entry.orientKey);
+            s.geoTemplateRefs.delete(entry.orientKey);
+          }
         }
+        s.meshByUid.delete(uid);
       }
     }
 
-    let cancelled = false;
-    // Hoisted so cleanup can dispose them if load() is cancelled mid-run
-    const geoCacheHoisted = new Map<string, THREE.BufferGeometry>();
-    const orientedCacheHoisted = new Map<string, THREE.BufferGeometry>();
+    // 3. Which UIDs need adding?
+    const toAdd: PlacementInfo[] = [];
+    for (const [uid, info] of newInfos) {
+      if (!s.meshByUid.has(uid)) toAdd.push(info);
+    }
 
-    async function load() {
-      const CHUNK = 4;
-
-      const uniqueKeys: string[] = [];
-      const seenKeys = new Set<string>();
-      for (const p of map.placements) {
-        const tt = ttMap.get(p.tileTypeId);
-        if (tt && !seenKeys.has(tt.stlBlobKey)) {
-          seenKeys.add(tt.stlBlobKey);
-          uniqueKeys.push(tt.stlBlobKey);
-        }
+    // Helper: update prop Y positions for all live props after floor changes
+    function updatePropPositions(sc: SceneState, cellTopY: Map<string, number>) {
+      for (const [uid, entry] of sc.meshByUid) {
+        const info = newInfos.get(uid);
+        if (!info || !info.tt.isProp) continue;
+        const mt = info.tt.modelTransform;
+        const eff = rotateFootprint(info.tt.footprint, info.p.rot);
+        const posY = resolvePropY(info.p, cellTopY);
+        const offsetY = mt?.offsetY ?? 0;
+        entry.mesh.position.set(info.p.gx + eff.w / 2, posY + offsetY, info.p.gy + eff.h / 2);
       }
+    }
 
-      const geoCache = geoCacheHoisted;
-      const orientedCache = orientedCacheHoisted;
-      const matCache = new Map<string, THREE.MeshStandardMaterial>();
+    if (toAdd.length === 0) {
+      // No new meshes — just refresh prop Y in case floor tiles moved
+      updatePropPositions(s, buildCellTopY(map.placements, ttMap));
+      s.needsRender = true;
+      return;
+    }
 
-      for (let i = 0; i < uniqueKeys.length; i += CHUNK) {
+    // 4. Identify which STL blobs need loading for missing templates
+    //    Group by stlBlobKey so we load each blob once even if multiple orientations needed
+    const blobToOrients = new Map<string, { ok: string; tt: TileType }[]>();
+    for (const info of toAdd) {
+      if (s.geoTemplates.has(info.ok)) continue; // template already present
+      const list = blobToOrients.get(info.tt.stlBlobKey) ?? [];
+      // Dedupe: same orientKey may appear multiple times in toAdd
+      if (!list.some(x => x.ok === info.ok)) {
+        list.push({ ok: info.ok, tt: info.tt });
+      }
+      blobToOrients.set(info.tt.stlBlobKey, list);
+    }
+
+    let cancelled = false;
+    const CHUNK = 4;
+    const uniqueSTLKeys = [...blobToOrients.keys()];
+
+    async function load(sc: SceneState) {
+      // Load missing STL blobs and build geometry templates
+      for (let i = 0; i < uniqueSTLKeys.length; i += CHUNK) {
         if (cancelled) return;
-        const chunkKeys = uniqueKeys.slice(i, i + CHUNK);
+        const chunkKeys = uniqueSTLKeys.slice(i, i + CHUNK);
 
         const blobEntries = await Promise.all(
           chunkKeys.map(async (key) => {
@@ -239,67 +376,70 @@ export function Scene({ active }: { active: boolean }) {
 
         for (const [key, blob] of blobEntries) {
           if (!blob) continue;
-          try { geoCache.set(key, buildGeometry(blob, renderSettings.maxTriangles)); } catch { /* skip bad STL */ }
-        }
-
-        // Add meshes for all placements whose STL is now ready
-        for (const p of map.placements) {
-          if (cancelled) return;
-          const tt = ttMap.get(p.tileTypeId);
-          if (!tt || !chunkKeys.includes(tt.stlBlobKey)) continue;
-          const baseGeo = geoCache.get(tt.stlBlobKey);
-          if (!baseGeo) continue;
-
-          const mt = tt.modelTransform;
-          const orientKey = mt
-            ? `${tt.stlBlobKey}|${mt.rx}|${mt.ry}|${mt.rz}`
-            : tt.stlBlobKey;
-          if (!orientedCache.has(orientKey)) {
-            orientedCache.set(orientKey, applyModelTransform(baseGeo, mt));
-          }
-          const orientedGeo = orientedCache.get(orientKey)!;
-
-          if (!matCache.has(tt.id)) {
-            matCache.set(tt.id, new THREE.MeshStandardMaterial({ color: 0x8a8a8a, roughness: 0.75 }));
+          let baseGeo: THREE.BufferGeometry;
+          try {
+            baseGeo = buildGeometry(blob, maxTriangles);
+          } catch {
+            continue; // skip bad STL
           }
 
-          const mesh = new THREE.Mesh(orientedGeo.clone(), matCache.get(tt.id)!);
-          const eff = rotateFootprint(tt.footprint, p.rot);
-          const posY = tt.isProp ? (() => {
-            const key = `${p.gx},${p.gy}`;
-            if (cellTopY.has(key)) return cellTopY.get(key)!;
-            for (let dx = -1; dx <= 1; dx++) {
-              for (let dy = -1; dy <= 1; dy++) {
-                if (dx === 0 && dy === 0) continue;
-                const h = cellTopY.get(`${p.gx + dx},${p.gy + dy}`);
-                if (h !== undefined) return h;
-              }
+          // Build all needed oriented templates for this blob
+          const orients = blobToOrients.get(key) ?? [];
+          for (const { ok, tt } of orients) {
+            if (!sc.geoTemplates.has(ok)) {
+              const template = applyModelTransform(baseGeo, tt.modelTransform);
+              sc.geoTemplates.set(ok, template);
+              sc.geoTemplateRefs.set(ok, new Set());
             }
-            return 0;
-          })() : 0;
-          const offsetY = mt?.offsetY ?? 0;
-          mesh.position.set(p.gx + eff.w / 2, posY + offsetY, p.gy + eff.h / 2);
-          mesh.rotation.y = -rotToRad(p.rot);
-          stateRef.current?.meshGroup.add(mesh);
+          }
+          baseGeo.dispose(); // base geo no longer needed; templates own the GPU data
         }
-
-        // Dispose base geometries for this chunk; oriented ones cleaned below
-        for (const key of chunkKeys) { geoCache.get(key)?.dispose(); geoCache.delete(key); }
       }
 
-      // Dispose oriented geometries and clear the hoisted map so cleanup is a no-op
-      for (const geo of orientedCache.values()) geo.dispose();
-      orientedCacheHoisted.clear();
+      if (cancelled) return;
+
+      // Compute cellTopY from ALL current placements (floors only)
+      const cellTopY = buildCellTopY(map.placements, ttMap);
+
+      // 5. Instantiate meshes for all new placements
+      for (const info of toAdd) {
+        if (cancelled) return;
+        const template = sc.geoTemplates.get(info.ok);
+        if (!template) continue; // STL failed to load
+
+        // Ensure material exists for this tile type
+        if (!sc.matCache.has(info.tt.id)) {
+          sc.matCache.set(info.tt.id, new THREE.MeshStandardMaterial({ color: 0x8a8a8a, roughness: 0.75 }));
+        }
+
+        const mesh = new THREE.Mesh(
+          template.clone(), // each mesh owns its geometry (for position-bake freedom)
+          sc.matCache.get(info.tt.id)!,
+        );
+
+        const mt = info.tt.modelTransform;
+        const eff = rotateFootprint(info.tt.footprint, info.p.rot);
+        const posY = info.tt.isProp ? resolvePropY(info.p, cellTopY) : 0;
+        const offsetY = mt?.offsetY ?? 0;
+        mesh.position.set(info.p.gx + eff.w / 2, posY + offsetY, info.p.gy + eff.h / 2);
+        mesh.rotation.y = -rotToRad(info.p.rot);
+
+        sc.meshGroup.add(mesh);
+
+        // Register in caches
+        sc.meshByUid.set(info.p.uid, { mesh, orientKey: info.ok, sig: info.sig });
+        sc.geoTemplateRefs.get(info.ok)!.add(info.p.uid);
+      }
+
+      if (cancelled) return;
+
+      // Update all props' Y positions in case new floor tiles changed cell heights
+      updatePropPositions(sc, buildCellTopY(map.placements, ttMap));
+      sc.needsRender = true;
     }
-    load();
-    return () => {
-      cancelled = true;
-      // Dispose anything left over from a mid-run cancellation
-      for (const geo of geoCacheHoisted.values()) geo.dispose();
-      geoCacheHoisted.clear();
-      for (const geo of orientedCacheHoisted.values()) geo.dispose();
-      orientedCacheHoisted.clear();
-    };
+
+    load(s);
+    return () => { cancelled = true; };
   }, [geomSignature, renderSettings.maxTriangles]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- Sync render settings → Three.js objects + CSS filter ----------------
@@ -307,24 +447,28 @@ export function Scene({ active }: { active: boolean }) {
     const s = stateRef.current;
     if (!s) return;
     s.ambientLight.intensity = renderSettings.ambient;
+    s.needsRender = true;
   }, [renderSettings.ambient]);
 
   useEffect(() => {
     const s = stateRef.current;
     if (!s) return;
     s.dirLight.intensity = renderSettings.dirLight;
+    s.needsRender = true;
   }, [renderSettings.dirLight]);
 
   useEffect(() => {
     const s = stateRef.current;
     if (!s) return;
     s.fog.density = renderSettings.fogDensity;
+    s.needsRender = true;
   }, [renderSettings.fogDensity]);
 
   useEffect(() => {
     const s = stateRef.current;
     if (!s) return;
     s.renderer.domElement.style.filter = cssFilter(renderSettings);
+    s.needsRender = true;
   }, [renderSettings.contrast, renderSettings.brightness, renderSettings.saturation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function toggleCamera() {
@@ -332,6 +476,7 @@ export function Scene({ active }: { active: boolean }) {
     if (!s) return;
     const next = s.mode === 'persp' ? 'ortho' : 'persp';
     s.mode = next;
+    s.needsRender = true;
     setTopDown(next === 'ortho');
   }
 

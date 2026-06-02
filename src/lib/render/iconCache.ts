@@ -1,7 +1,60 @@
 import { loadSTLBlob } from '../db/blobs';
 import { renderIconAsync } from './iconWorker';
 
+// LRU cache: insertion-order eviction, capped at MAX_CACHE entries.
+// Values are Promises so duplicate concurrent requests coalesce.
+const MAX_CACHE = 256;
 const cache = new Map<string, Promise<string>>();
+
+function lruGet(key: string): Promise<string> | undefined {
+  const v = cache.get(key);
+  if (!v) return undefined;
+  // Refresh entry (move to end = most-recently used)
+  cache.delete(key);
+  cache.set(key, v);
+  return v;
+}
+
+function lruSet(key: string, value: Promise<string>) {
+  if (cache.size >= MAX_CACHE) {
+    // Evict oldest entry (first key in insertion order)
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+  cache.set(key, value);
+}
+
+// Remove all cache entries for a tile type (call on tile delete).
+export function evictIcon(tileTypeId: string) {
+  for (const key of [...cache.keys()]) {
+    if (key.startsWith(`${tileTypeId}:`)) cache.delete(key);
+  }
+}
+
+// ---- Semaphore: cap concurrent blob loads + iconWorker messages to MAX_CONCURRENT ----
+const MAX_CONCURRENT = 4;
+let _running = 0;
+const _waiters: (() => void)[] = [];
+
+function acquire(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (_running < MAX_CONCURRENT) {
+      _running++;
+      resolve();
+    } else {
+      _waiters.push(() => { _running++; resolve(); });
+    }
+  });
+}
+
+function release() {
+  const next = _waiters.shift();
+  if (next) {
+    next();
+  } else {
+    _running--;
+  }
+}
 
 export function requestIcon(
   tileTypeId: string,
@@ -10,15 +63,21 @@ export function requestIcon(
   heightClass?: string,
 ): Promise<string> {
   const key = `${tileTypeId}:${heightClass ?? ''}`;
-  if (cache.has(key)) return cache.get(key)!;
+  const cached = lruGet(key);
+  if (cached) return cached;
 
-  const p = loadSTLBlob(stlBlobKey).then((raw) => {
-    if (!raw) return '';
-    return renderIconAsync({ id: tileTypeId, raw: raw.slice(0), footprint, heightClass }).then((result) =>
-      result.error ? '' : result.topDataUrl,
-    );
-  });
+  const p = (async () => {
+    await acquire();
+    try {
+      const raw = await loadSTLBlob(stlBlobKey);
+      if (!raw) return '';
+      const result = await renderIconAsync({ id: tileTypeId, raw: raw.slice(0), footprint, heightClass });
+      return result.error ? '' : result.topDataUrl;
+    } finally {
+      release();
+    }
+  })();
 
-  cache.set(key, p);
+  lruSet(key, p);
   return p;
 }

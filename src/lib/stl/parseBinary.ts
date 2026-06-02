@@ -74,9 +74,26 @@ export interface STLGeometry {
 
 // maxTriangles: if STL exceeds this, uniformly subsample (faster render, slight quality loss).
 // Pass Infinity to disable. Default 40_000 is a good balance for 3D preview.
+// Validates the buffer so callers don't need a prior parseBinarySTL pass.
 export function extractGeometry(raw: ArrayBuffer, maxTriangles = 40_000): STLGeometry {
+  if (raw.byteLength < 84) throw new STLParseError('File too small to be binary STL');
+
   const view = new DataView(raw);
   const triangleCount = view.getUint32(80, true);
+  const expectedSize = 84 + triangleCount * 50;
+
+  if (raw.byteLength < expectedSize) {
+    throw new STLParseError(
+      `Binary STL truncated: expected ${expectedSize} bytes for ${triangleCount} triangles, got ${raw.byteLength}`,
+    );
+  }
+
+  // ASCII STL detection (mirrors parseBinarySTL logic)
+  const headerText = String.fromCharCode(...new Uint8Array(raw, 0, 5));
+  if (headerText === 'solid' && (triangleCount === 0 || raw.byteLength !== expectedSize)) {
+    throw new STLParseError('ASCII STL not supported; please export as binary STL');
+  }
+
   const step = triangleCount > maxTriangles ? Math.ceil(triangleCount / maxTriangles) : 1;
   const kept = Math.ceil(triangleCount / step);
 

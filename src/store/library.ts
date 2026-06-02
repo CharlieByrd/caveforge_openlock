@@ -2,6 +2,7 @@ import { v4 as uuid } from 'uuid';
 import { create } from 'zustand';
 import type { Pack, TileType } from '../lib/db/schema';
 import { getAllPacks, getAllTileTypes, putTileType, deleteTileType, putPack, deletePack as deletePackIDB } from '../lib/db/idb';
+import { evictIcon } from '../lib/render/iconCache';
 
 interface LibraryState {
   packs: Pack[];
@@ -48,6 +49,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   },
 
   removeTileType: async (id) => {
+    evictIcon(id);
     await deleteTileType(id);
     set((s) => ({ tileTypes: s.tileTypes.filter((t) => t.id !== id) }));
   },
@@ -83,6 +85,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
   deletePack: async (id) => {
     const tilesToDelete = get().tileTypes.filter((t) => t.packId === id);
+    tilesToDelete.forEach((t) => evictIcon(t.id));
     await Promise.all(tilesToDelete.map((t) => deleteTileType(t.id)));
     await deletePackIDB(id);
     set((s) => ({
