@@ -2,7 +2,7 @@ import { openDB, type IDBPDatabase } from 'idb';
 import type { Pack, TileType, BlobRecord, MapDoc, Settings } from './schema';
 
 const DB_NAME = 'caveforge';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export type CaveForgeDB = IDBPDatabase<{
   packs: { key: string; value: Pack };
@@ -10,6 +10,7 @@ export type CaveForgeDB = IDBPDatabase<{
   blobs: { key: string; value: BlobRecord };
   maps: { key: string; value: MapDoc };
   settings: { key: string; value: Settings };
+  thumbnails: { key: string; value: string };
 }>;
 
 let _db: CaveForgeDB | null = null;
@@ -34,6 +35,9 @@ export async function getDB(): Promise<CaveForgeDB> {
       }
       if (!db.objectStoreNames.contains('settings')) {
         db.createObjectStore('settings');
+      }
+      if (!db.objectStoreNames.contains('thumbnails')) {
+        db.createObjectStore('thumbnails');
       }
     },
   });
@@ -142,4 +146,25 @@ export async function getSettings(): Promise<Settings> {
 export async function putSettings(s: Settings) {
   const db = await getDB();
   return db.put('settings', s, SETTINGS_KEY);
+}
+
+// --- Thumbnails ---
+export async function getThumbnail(key: string): Promise<string | undefined> {
+  const db = await getDB();
+  return db.get('thumbnails', key);
+}
+
+export async function putThumbnail(key: string, dataUrl: string) {
+  const db = await getDB();
+  return db.put('thumbnails', dataUrl, key);
+}
+
+export async function deleteThumbnailsByPrefix(prefix: string) {
+  const db = await getDB();
+  const keys = await db.getAllKeys('thumbnails');
+  const tx = db.transaction('thumbnails', 'readwrite');
+  await Promise.all(
+    keys.filter((k) => (k as string).startsWith(prefix)).map((k) => tx.store.delete(k)),
+  );
+  await tx.done;
 }

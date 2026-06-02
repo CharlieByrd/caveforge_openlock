@@ -1,4 +1,5 @@
 import { loadSTLBlob } from '../db/blobs';
+import { getThumbnail, putThumbnail, deleteThumbnailsByPrefix } from '../db/idb';
 import { renderIconAsync } from './iconWorker';
 
 // LRU cache: insertion-order eviction, capped at MAX_CACHE entries.
@@ -26,9 +27,11 @@ function lruSet(key: string, value: Promise<string>) {
 
 // Remove all cache entries for a tile type (call on tile delete).
 export function evictIcon(tileTypeId: string) {
+  const prefix = `${tileTypeId}:`;
   for (const key of [...cache.keys()]) {
-    if (key.startsWith(`${tileTypeId}:`)) cache.delete(key);
+    if (key.startsWith(prefix)) cache.delete(key);
   }
+  deleteThumbnailsByPrefix(prefix).catch(() => {});
 }
 
 // ---- Semaphore: cap concurrent blob loads + iconWorker messages to MAX_CONCURRENT ----
@@ -42,7 +45,7 @@ function acquire(): Promise<void> {
       _running++;
       resolve();
     } else {
-      _waiters.push(() => { _running++; resolve(); });
+      _waiters.push(resolve);
     }
   });
 }
@@ -67,12 +70,17 @@ export function requestIcon(
   if (cached) return cached;
 
   const p = (async () => {
+    const persisted = await getThumbnail(key).catch(() => undefined);
+    if (persisted) return persisted;
+
     await acquire();
     try {
       const raw = await loadSTLBlob(stlBlobKey);
       if (!raw) return '';
       const result = await renderIconAsync({ id: tileTypeId, raw: raw.slice(0), footprint, heightClass });
-      return result.error ? '' : result.topDataUrl;
+      if (result.error) return '';
+      putThumbnail(key, result.topDataUrl).catch(() => {});
+      return result.topDataUrl;
     } finally {
       release();
     }
