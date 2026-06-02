@@ -469,7 +469,8 @@ button.danger:hover { background: #c0392b; }
 
 .editor-views { flex: 1; display: flex; overflow: hidden; }
 .editor-views--2d .view-pane--3d,
-.editor-views--3d .view-pane--2d { display: none; }
+.editor-views--3d .view-pane--2d,
+.editor-views--bom .view-pane--3d { display: none; }
 .editor-views--split .view-pane { flex: 1; }
 .editor-views--2d .view-pane--2d,
 .editor-views--3d .view-pane--3d { flex: 1; }

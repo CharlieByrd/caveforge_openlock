@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { useMapStore } from '../../store/map';
@@ -7,6 +7,7 @@ import { useRenderStore, cssFilter } from '../../store/render';
 import { loadSTLBlob } from '../../lib/db/blobs';
 import { rotateFootprint, rotToRad } from '../../lib/grid/transform';
 import { buildGeometry, applyModelTransform, SCALE } from '../../lib/three/geometry';
+import type { TileType } from '../../lib/db/schema';
 
 const FRUSTUM = 24;
 
@@ -25,14 +26,25 @@ interface SceneState {
   rafId: number;
 }
 
-export function Scene() {
+export function Scene({ active }: { active: boolean }) {
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<SceneState | null>(null);
   const [topDown, setTopDown] = useState(false);
+  const activeRef = useRef(active);
 
   const { map } = useMapStore();
   const { tileTypes } = useLibraryStore();
   const renderSettings = useRenderStore();
+
+  // Keep activeRef in sync; flush one render frame when becoming visible
+  useEffect(() => {
+    activeRef.current = active;
+    if (active && stateRef.current) {
+      const s = stateRef.current;
+      const cam = s.mode === 'ortho' ? s.orthoCam : s.perspCam;
+      s.renderer.render(s.scene, cam);
+    }
+  }, [active]);
 
   // ---- Three.js init (once on mount) ----------------------------------------
   useEffect(() => {
@@ -96,6 +108,7 @@ export function Scene() {
 
     function animate() {
       s.rafId = requestAnimationFrame(animate);
+      if (!activeRef.current) return; // skip render when hidden
       if (s.mode === 'ortho') { orthoCtrl.update(); renderer.render(scene, orthoCam); }
       else                    { perspCtrl.update();  renderer.render(scene, perspCam);  }
     }
@@ -104,7 +117,7 @@ export function Scene() {
     const ro = new ResizeObserver(() => {
       const w = mount.clientWidth;
       const h = mount.clientHeight;
-      if (!w || !h) return; // hidden via display:none, skip
+      if (!w || !h) return;
       const a = w / h;
       perspCam.aspect = a;
       perspCam.updateProjectionMatrix();
@@ -122,13 +135,45 @@ export function Scene() {
       ro.disconnect();
       perspCtrl.dispose();
       orthoCtrl.dispose();
+      // Dispose all GPU-resident buffers before releasing the WebGL context
+      s.scene.traverse(obj => {
+        if (obj instanceof THREE.Mesh) {
+          obj.geometry.dispose();
+          if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+          else (obj.material as THREE.Material).dispose();
+        }
+      });
       renderer.dispose();
       stateRef.current = null;
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ---- Mesh rebuild on placements / tileTypes change -----------------------
+  // ---- Keep ttMapRef in sync — used by rebuild effect without listing tileTypes as dep ----
+  const ttMapRef = useRef<Map<string, TileType>>(new Map());
+  useEffect(() => {
+    ttMapRef.current = new Map(tileTypes.map(t => [t.id, t]));
+  }, [tileTypes]);
+
+  // ---- Geometry signature — only changes when placed tiles' geometry changes ----
+  // This prevents the rebuild from firing when unrelated tiles are imported.
+  const geomSignature = useMemo(() => {
+    const ttMap = new Map(tileTypes.map(t => [t.id, t]));
+    return map.placements.map(p => {
+      const tt = ttMap.get(p.tileTypeId);
+      if (!tt) return p.tileTypeId;
+      const mt = tt.modelTransform;
+      return [
+        p.uid, p.tileTypeId, p.gx, p.gy, p.rot,
+        tt.stlBlobKey,
+        mt?.rx ?? 0, mt?.ry ?? 0, mt?.rz ?? 0, mt?.offsetY ?? 0,
+        tt.footprint.w, tt.footprint.h, tt.sizeMM.z,
+        tt.isProp ? 1 : 0, tt.heightClass,
+      ].join(',');
+    }).sort().join('|');
+  }, [map.placements, tileTypes]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- Mesh rebuild on geometry-relevant changes only -----------------------
   useEffect(() => {
     const s = stateRef.current;
     if (!s) return;
@@ -141,7 +186,7 @@ export function Scene() {
     });
     s.meshGroup.clear();
 
-    const ttMap = new Map(tileTypes.map(t => [t.id, t]));
+    const ttMap = ttMapRef.current;
 
     // For each grid cell, track the highest tile top (world units) so props can sit on top
     const cellTopY = new Map<string, number>();
@@ -159,11 +204,13 @@ export function Scene() {
     }
 
     let cancelled = false;
+    // Hoisted so cleanup can dispose them if load() is cancelled mid-run
+    const geoCacheHoisted = new Map<string, THREE.BufferGeometry>();
+    const orientedCacheHoisted = new Map<string, THREE.BufferGeometry>();
 
     async function load() {
-      const CHUNK = 4; // blobs loaded in parallel per batch
+      const CHUNK = 4;
 
-      // Collect unique STL keys needed
       const uniqueKeys: string[] = [];
       const seenKeys = new Set<string>();
       for (const p of map.placements) {
@@ -174,13 +221,10 @@ export function Scene() {
         }
       }
 
-      // base geo cache: stlBlobKey → geometry (identity transform, shared)
-      const geoCache = new Map<string, THREE.BufferGeometry>();
-      // oriented geo cache: "${stlBlobKey}|${rx}|${ry}|${rz}" → geometry with modelTransform applied
-      const orientedCache = new Map<string, THREE.BufferGeometry>();
+      const geoCache = geoCacheHoisted;
+      const orientedCache = orientedCacheHoisted;
       const matCache = new Map<string, THREE.MeshStandardMaterial>();
 
-      // Load + build in chunks of CHUNK, add meshes as each chunk completes
       for (let i = 0; i < uniqueKeys.length; i += CHUNK) {
         if (cancelled) return;
         const chunkKeys = uniqueKeys.slice(i, i + CHUNK);
@@ -206,7 +250,6 @@ export function Scene() {
           const baseGeo = geoCache.get(tt.stlBlobKey);
           if (!baseGeo) continue;
 
-          // Get or build oriented geometry for this tileType's modelTransform
           const mt = tt.modelTransform;
           const orientKey = mt
             ? `${tt.stlBlobKey}|${mt.rx}|${mt.ry}|${mt.rz}`
@@ -244,12 +287,20 @@ export function Scene() {
         for (const key of chunkKeys) { geoCache.get(key)?.dispose(); geoCache.delete(key); }
       }
 
-      // Dispose oriented geometries
+      // Dispose oriented geometries and clear the hoisted map so cleanup is a no-op
       for (const geo of orientedCache.values()) geo.dispose();
+      orientedCacheHoisted.clear();
     }
     load();
-    return () => { cancelled = true; };
-  }, [map.placements, tileTypes, renderSettings.maxTriangles]); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => {
+      cancelled = true;
+      // Dispose anything left over from a mid-run cancellation
+      for (const geo of geoCacheHoisted.values()) geo.dispose();
+      geoCacheHoisted.clear();
+      for (const geo of orientedCacheHoisted.values()) geo.dispose();
+      orientedCacheHoisted.clear();
+    };
+  }, [geomSignature, renderSettings.maxTriangles]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- Sync render settings → Three.js objects + CSS filter ----------------
   useEffect(() => {

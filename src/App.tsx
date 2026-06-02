@@ -134,12 +134,10 @@ export default function App() {
                 </div>
               </div>
             )}
-            {(viewMode === '3d' || viewMode === 'split') && (
-              <div className="view-pane view-pane--3d">
-                <div className="view-label">3D Preview</div>
-                <Scene />
-              </div>
-            )}
+            <div className="view-pane view-pane--3d">
+              <div className="view-label">3D Preview</div>
+              <Scene active={viewMode === '3d' || viewMode === 'split'} />
+            </div>
           </div>
         </div>
       </div>

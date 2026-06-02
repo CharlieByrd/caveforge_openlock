@@ -1,7 +1,6 @@
 import { v4 as uuid } from 'uuid';
-import { parseBinarySTL, bboxSizeMM } from '../../lib/stl/parseBinary';
-import { sha256hex } from '../../lib/stl/hash';
 import { footprintOf, heightClassOf } from '../../lib/grid/cell';
+import { computeStlMeta } from '../../lib/stl/stlMetaWorker';
 import { putPack, putTileType, getTileTypesByHash, getAllPacks } from '../../lib/db/idb';
 import { saveSTLBlob } from '../../lib/db/blobs';
 import type { Pack, TileType } from '../../lib/db/schema';
@@ -103,11 +102,12 @@ export async function importFromPlan(
     onProgress?.(progress);
 
     try {
-      const raw = await item.file.arrayBuffer();
-      const hash = await sha256hex(raw);
-
-      const parsed = parseBinarySTL(raw);
-      const sizeMM = bboxSizeMM(parsed.bbox);
+      const rawIn = await item.file.arrayBuffer();
+      const meta = await computeStlMeta(`${item.file.name}:${progress.done}`, rawIn);
+      if (meta.error) throw new Error(meta.error);
+      const raw = meta.raw!; // transferred back from worker; rawIn is now detached
+      const hash = meta.hash!;
+      const sizeMM = meta.sizeMM!;
       const fp = footprintOf(sizeMM);
       const heightClass = item.isProp ? 'prop' : heightClassOf(sizeMM, fp);
 
@@ -171,11 +171,12 @@ export async function importFiles(
     onProgress?.(progress);
 
     try {
-      const raw = await file.arrayBuffer();
-      const hash = await sha256hex(raw);
-
-      const parsed = parseBinarySTL(raw);
-      const sizeMM = bboxSizeMM(parsed.bbox);
+      const rawIn = await file.arrayBuffer();
+      const meta = await computeStlMeta(`${file.name}:${progress.done}`, rawIn);
+      if (meta.error) throw new Error(meta.error);
+      const raw = meta.raw!; // transferred back from worker; rawIn is now detached
+      const hash = meta.hash!;
+      const sizeMM = meta.sizeMM!;
       const fp = footprintOf(sizeMM);
       const heightClass = heightClassOf(sizeMM, fp);
 
