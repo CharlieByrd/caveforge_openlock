@@ -16,7 +16,7 @@ function getWorker(): Worker {
   return _worker;
 }
 
-export function renderIconAsync(req: IconRequest): Promise<IconResult> {
+export function renderIconAsync(req: IconRequest & { heightClass?: string }): Promise<IconResult> {
   return new Promise((resolve) => {
     pending.set(req.id, resolve);
     getWorker().postMessage(req, [req.raw]);

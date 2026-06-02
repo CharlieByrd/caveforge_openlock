@@ -19,6 +19,8 @@ export function AssetsScreen() {
   const [dragOverTileId, setDragOverTileId] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
 
+  const isAllView = !selectedPackId && !selectedCategory;
+
   function handleNavSelect(packId: string | null, category: string | null) {
     setSelectedPackId(packId);
     setSelectedCategory(category);
@@ -42,6 +44,7 @@ export function AssetsScreen() {
   }
 
   function handleDropOnTile(targetId: string) {
+    if (isAllView) return;
     if (!draggingTileId || draggingTileId === targetId) return;
     const dragTile = tileTypes.find((t) => t.id === draggingTileId);
     const targetTile = tileTypes.find((t) => t.id === targetId);
@@ -97,11 +100,11 @@ export function AssetsScreen() {
             <div className="assets-toolbar">
               <input
                 className="search-input"
-                placeholder="Search tiles…"
+                placeholder="Search models…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
-              <span className="assets-count">{filtered.length} tile{filtered.length !== 1 ? 's' : ''}</span>
+              <span className="assets-count">{filtered.length} model{filtered.length !== 1 ? 's' : ''}</span>
             </div>
             <div className="assets-grid">
               {filtered.map((tile) => (
@@ -109,18 +112,18 @@ export function AssetsScreen() {
                   key={tile.id}
                   tile={tile}
                   selected={selectedTileId === tile.id}
-                  dragOver={dragOverTileId === tile.id}
+                  dragOver={!isAllView && dragOverTileId === tile.id}
                   onSelect={() => setSelectedTileId(tile.id === selectedTileId ? null : tile.id)}
                   onDragStart={() => { setDraggingTileId(tile.id); setDragOverTileId(null); }}
                   onDragEnd={() => { setDraggingTileId(null); setDragOverTileId(null); }}
-                  onDragOver={() => setDragOverTileId(tile.id)}
+                  onDragOver={() => { if (!isAllView) setDragOverTileId(tile.id); }}
                   onDragLeave={() => setDragOverTileId(null)}
                   onDrop={() => handleDropOnTile(tile.id)}
                 />
               ))}
               {filtered.length === 0 && (
                 <p className="assets-empty">
-                  {tileTypes.length === 0 ? 'No tiles yet. Import STL files.' : 'No tiles match.'}
+                  {tileTypes.length === 0 ? 'No models yet. Import STL files.' : 'No models match.'}
                 </p>
               )}
             </div>

@@ -4,6 +4,7 @@ export interface IconRequest {
   id: string;
   raw: ArrayBuffer;
   footprint: { w: number; h: number };
+  heightClass?: string;
 }
 
 export interface IconResult {
@@ -40,9 +41,11 @@ function getRenderer(w: number, h: number): THREE.WebGLRenderer {
 }
 
 self.onmessage = async (e: MessageEvent<IconRequest>) => {
-  const { id, raw, footprint } = e.data;
+  const { id, raw, footprint, heightClass } = e.data;
   try {
-    const topDataUrl = renderTopDown(raw, footprint);
+    const topDataUrl = heightClass === 'prop'
+      ? renderAngled(raw, footprint)
+      : renderTopDown(raw, footprint);
     self.postMessage({ id, topDataUrl } satisfies IconResult);
   } catch (err) {
     self.postMessage({ id, topDataUrl: '', error: String(err) } satisfies IconResult);
@@ -120,6 +123,69 @@ function renderTopDown(raw: ArrayBuffer, footprint: { w: number; h: number }): s
       flipped[dst + i + 1] = contrastByte(src[i + 1]);
       flipped[dst + i + 2] = contrastByte(src[i + 2]);
       flipped[dst + i + 3] = src[i + 3]; // alpha unchanged
+    }
+  }
+
+  return encodePng(flipped, W, H);
+}
+
+function renderAngled(raw: ArrayBuffer, footprint: { w: number; h: number }): string {
+  const SIZE = TILE_PX * Math.max(footprint.w, footprint.h);
+  const W = SIZE;
+  const H = SIZE;
+  const renderer = getRenderer(W, H);
+
+  const geo = parseSTLGeometry(raw);
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox!;
+  const center = new THREE.Vector3();
+  bb.getCenter(center);
+  geo.translate(-center.x, -center.y, -center.z);
+  geo.computeBoundingBox();
+
+  const sphere = new THREE.Sphere();
+  geo.computeBoundingSphere();
+  sphere.copy(geo.boundingSphere!);
+  const r = sphere.radius || 1;
+
+  const scene = new THREE.Scene();
+  scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.8);
+  sun.position.set(1, 2, 1.5);
+  scene.add(sun);
+  const fill = new THREE.DirectionalLight(0xaabbdd, 0.35);
+  fill.position.set(-1, 0.5, -0.5);
+  scene.add(fill);
+
+  const mat = new THREE.MeshStandardMaterial({ color: 0xc8c8c8, roughness: 0.55, metalness: 0.0 });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.rotation.x = -Math.PI / 2;
+  scene.add(mesh);
+
+  // Isometric-ish perspective: above + front-right
+  const dist = r * 3.5;
+  const cam = new THREE.PerspectiveCamera(35, W / H, 0.01, dist * 10);
+  cam.position.set(dist * 0.8, dist * 0.9, dist * 0.8);
+  cam.lookAt(0, 0, 0);
+
+  renderer.render(scene, cam);
+
+  const pixels = new Uint8Array(W * H * 4);
+  renderer.getContext().readPixels(0, 0, W, H, 0x1908, 0x1401, pixels);
+
+  geo.dispose();
+  mat.dispose();
+
+  const flipped = new Uint8ClampedArray(W * H * 4);
+  const stride = W * 4;
+  for (let row = 0; row < H; row++) {
+    const src = pixels.subarray((H - 1 - row) * stride, (H - row) * stride);
+    const dst = row * stride;
+    for (let i = 0; i < stride; i += 4) {
+      flipped[dst + i]     = contrastByte(src[i]);
+      flipped[dst + i + 1] = contrastByte(src[i + 1]);
+      flipped[dst + i + 2] = contrastByte(src[i + 2]);
+      flipped[dst + i + 3] = src[i + 3];
     }
   }
 

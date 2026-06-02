@@ -35,7 +35,7 @@ export function PackNav({
         className={`pack-nav-all${!selectedPackId ? ' active' : ''}`}
         onClick={() => onSelect(null, null)}
       >
-        <span>All tiles</span>
+        <span>All models</span>
         <span className="pack-nav-count">{tileTypes.length}</span>
       </div>
 

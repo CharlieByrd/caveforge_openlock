@@ -25,7 +25,7 @@ export function AssetTileCard({ tile, selected, dragOver, onSelect, onDragStart,
       ([entry]) => {
         if (!entry.isIntersecting) return;
         obs.disconnect();
-        requestIcon(tile.id, tile.stlBlobKey, tile.footprint).then((url) => {
+        requestIcon(tile.id, tile.stlBlobKey, tile.footprint, tile.heightClass).then((url) => {
           if (!cancelled && url) setIcon(url);
         });
       },
@@ -33,7 +33,7 @@ export function AssetTileCard({ tile, selected, dragOver, onSelect, onDragStart,
     );
     if (ref.current) obs.observe(ref.current);
     return () => { cancelled = true; obs.disconnect(); };
-  }, [tile.id, tile.stlBlobKey, tile.footprint]);
+  }, [tile.id, tile.stlBlobKey, tile.footprint, tile.heightClass]);
 
   return (
     <div

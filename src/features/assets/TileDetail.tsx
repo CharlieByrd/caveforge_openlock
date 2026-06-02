@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { TileType, HeightClass } from '../../lib/db/schema';
 import { useLibraryStore } from '../../store/library';
+import { AssetPreview } from './AssetPreview';
 
 interface Props {
   tile: TileType;
@@ -16,6 +17,10 @@ export function TileDetail({ tile, onClose }: Props) {
   const [fpH, setFpH] = useState(tile.footprint.h);
   const [heightClass, setHeightClass] = useState<HeightClass>(tile.heightClass);
   const [inStock, setInStock] = useState(tile.inStock);
+  const [rx, setRx] = useState(tile.modelTransform?.rx ?? 0);
+  const [ry, setRy] = useState(tile.modelTransform?.ry ?? 0);
+  const [rz, setRz] = useState(tile.modelTransform?.rz ?? 0);
+  const [offsetY, setOffsetY] = useState(tile.modelTransform?.offsetY ?? 0);
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
@@ -26,16 +31,31 @@ export function TileDetail({ tile, onClose }: Props) {
     setFpH(tile.footprint.h);
     setHeightClass(tile.heightClass);
     setInStock(tile.inStock);
+    setRx(tile.modelTransform?.rx ?? 0);
+    setRy(tile.modelTransform?.ry ?? 0);
+    setRz(tile.modelTransform?.rz ?? 0);
+    setOffsetY(tile.modelTransform?.offsetY ?? 0);
     setDirty(false);
-  }, [tile.id]);
+  }, [tile.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function mark() { setDirty(true); }
+
+  function step(setter: (v: number) => void, current: number, delta: number) {
+    setter(((current + delta) % 360 + 360) % 360);
+    mark();
+  }
+
+  function parseAngle(s: string) {
+    const n = parseFloat(s);
+    return isNaN(n) ? 0 : ((n % 360) + 360) % 360;
+  }
 
   async function save() {
     await updateTileType(tile.id, {
       name, packId, category,
       footprint: { w: fpW, h: fpH },
       heightClass, inStock,
+      modelTransform: { rx, ry, rz, offsetY },
     });
     setDirty(false);
   }
@@ -100,6 +120,54 @@ export function TileDetail({ tile, onClose }: Props) {
         <div className="tile-detail-size">
           {tile.sizeMM.x.toFixed(1)} × {tile.sizeMM.y.toFixed(1)} × {tile.sizeMM.z.toFixed(1)} mm
         </div>
+
+        {/* ---- Orientation ---- */}
+        <div className="tile-detail-section-label">Orientation</div>
+
+        <AssetPreview tile={tile} rx={rx} ry={ry} rz={rz} offsetY={offsetY} />
+
+        <div className="orient-note">
+          Note: footprint/height class are import-time and won't auto-update when axes change.
+          Adjust them manually above if needed.
+        </div>
+
+        {[
+          { label: 'X', val: rx, set: setRx },
+          { label: 'Y', val: ry, set: setRy },
+          { label: 'Z', val: rz, set: setRz },
+        ].map(({ label, val, set }) => (
+          <div key={label} className="orient-row">
+            <span className="orient-axis">{label}</span>
+            <button className="orient-step" onClick={() => step(set, val, -90)}>−90°</button>
+            <button className="orient-step" onClick={() => step(set, val, +90)}>+90°</button>
+            <input
+              className="orient-input"
+              type="number"
+              step={1}
+              value={val}
+              onChange={(e) => { set(parseAngle(e.target.value)); mark(); }}
+            />
+            <span className="orient-unit">°</span>
+          </div>
+        ))}
+
+        <div className="orient-row">
+          <span className="orient-axis">Y↕</span>
+          <span className="orient-offset-label">Offset</span>
+          <input
+            className="orient-input orient-input--offset"
+            type="number"
+            step={0.1}
+            value={offsetY}
+            onChange={(e) => { setOffsetY(parseFloat(e.target.value) || 0); mark(); }}
+          />
+          <span className="orient-unit">cells</span>
+        </div>
+
+        <button
+          className="orient-reset"
+          onClick={() => { setRx(0); setRy(0); setRz(0); setOffsetY(0); mark(); }}
+        >Reset orientation</button>
 
         <div className="tile-detail-actions">
           <button
