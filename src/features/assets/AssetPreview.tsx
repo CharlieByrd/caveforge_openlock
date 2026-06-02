@@ -26,6 +26,9 @@ export function AssetPreview({ tile, rx, ry, rz, offsetY }: Props) {
     rafId: number;
   } | null>(null);
 
+  // Cached base geometry for the current stlBlobKey (no transform applied)
+  const baseGeoRef = useRef<THREE.BufferGeometry | null>(null);
+
   // Init scene once on mount
   useEffect(() => {
     const mount = mountRef.current;
@@ -84,18 +87,45 @@ export function AssetPreview({ tile, rx, ry, rz, offsetY }: Props) {
       controls.dispose();
       renderer.dispose();
       threeRef.current = null;
+      baseGeoRef.current?.dispose();
+      baseGeoRef.current = null;
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reload mesh whenever tile or transform changes
+  // Effect A: load + parse geometry once per stlBlobKey change
   useEffect(() => {
+    let cancelled = false;
+
+    async function loadBase() {
+      const blob = await loadSTLBlob(tile.stlBlobKey);
+      if (cancelled || !blob) return;
+
+      baseGeoRef.current?.dispose();
+      baseGeoRef.current = null;
+
+      try {
+        baseGeoRef.current = buildGeometry(blob, 20000);
+      } catch {
+        return;
+      }
+
+      if (!cancelled) swapMesh(baseGeoRef.current);
+    }
+
+    loadBase();
+    return () => { cancelled = true; };
+  }, [tile.stlBlobKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Effect B: apply transform on cached base geo (no IDB read, no STL re-parse)
+  useEffect(() => {
+    if (baseGeoRef.current) swapMesh(baseGeoRef.current);
+  }, [rx, ry, rz, offsetY]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function swapMesh(baseGeo: THREE.BufferGeometry) {
     const t = threeRef.current;
     if (!t) return;
 
-    let cancelled = false;
-
-    // Remove old mesh
     if (t.mesh) {
       t.scene.remove(t.mesh);
       t.mesh.geometry.dispose();
@@ -104,31 +134,19 @@ export function AssetPreview({ tile, rx, ry, rz, offsetY }: Props) {
     }
 
     const transform: ModelTransform = { rx, ry, rz, offsetY };
-
-    async function load() {
-      const blob = await loadSTLBlob(tile.stlBlobKey);
-      if (cancelled || !blob || !threeRef.current) return;
-      const t2 = threeRef.current;
-
-      let geo: THREE.BufferGeometry;
-      try {
-        const base = buildGeometry(blob, 20000);
-        geo = applyModelTransform(base, transform);
-        base.dispose(); // applyModelTransform always returns a clone
-      } catch {
-        return;
-      }
-
-      const mat = new THREE.MeshStandardMaterial({ color: 0x8a8a8a, roughness: 0.75 });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.y = offsetY;
-      t2.scene.add(mesh);
-      t2.mesh = mesh;
+    let geo: THREE.BufferGeometry;
+    try {
+      geo = applyModelTransform(baseGeo, transform);
+    } catch {
+      return;
     }
-    load();
 
-    return () => { cancelled = true; };
-  }, [tile.stlBlobKey, rx, ry, rz, offsetY]); // eslint-disable-line react-hooks/exhaustive-deps
+    const mat = new THREE.MeshStandardMaterial({ color: 0x8a8a8a, roughness: 0.75 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.y = offsetY;
+    t.scene.add(mesh);
+    t.mesh = mesh;
+  }
 
   return (
     <div
