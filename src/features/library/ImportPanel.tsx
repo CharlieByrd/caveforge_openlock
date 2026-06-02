@@ -1,12 +1,12 @@
 import { useRef, useState } from 'react';
-import { UploadCloud, Download, FileUp, FolderUp, ShieldCheck, LoaderCircle, Check } from 'lucide-react';
+import { UploadCloud, Download, FileUp, FolderUp, ShieldCheck, LoaderCircle, Check, X } from 'lucide-react';
 import { importFromPlan, guessCategory, type ImportProgress } from './importLogic';
 import { useLibraryStore } from '../../store/library';
 
 type Phase = 'idle' | 'dragging' | 'dest' | 'importing' | 'done';
 type DestMode = 'existing' | 'new';
 
-export function ImportPanel() {
+export function ImportPanel({ onCancel }: { onCancel?: () => void }) {
   const folderRef = useRef<HTMLInputElement>(null);
   const filesRef = useRef<HTMLInputElement>(null);
   const [phase, setPhase] = useState<Phase>('idle');
@@ -69,6 +69,11 @@ export function ImportPanel() {
     if (filesRef.current) filesRef.current.value = '';
   }
 
+  function cancelAndExit() {
+    reset();
+    onCancel?.();
+  }
+
   const destOk = destMode === 'existing' ? !!destPackId : newPackName.trim().length > 0;
 
   return (
@@ -118,6 +123,14 @@ export function ImportPanel() {
           <div className="import-formats">
             <ShieldCheck size={12} /> .stl only · stored &amp; exported byte-for-byte · works offline
           </div>
+          {onCancel && (
+            <button
+              className="import-cancel-btn"
+              onClick={e => { e.stopPropagation(); cancelAndExit(); }}
+            >
+              <span className="btn-icon-label"><X size={13} />Cancel</span>
+            </button>
+          )}
         </div>
       )}
 
@@ -179,7 +192,9 @@ export function ImportPanel() {
                 }
               </span>
             </button>
-            <button onClick={reset}>Cancel</button>
+            <button onClick={cancelAndExit}>
+              <span className="btn-icon-label"><X size={13} />Cancel</span>
+            </button>
           </div>
         </div>
       )}
@@ -215,9 +230,14 @@ export function ImportPanel() {
             </details>
           )}
           <div className="import-actions">
-            <button onClick={reset}>
+            <button className="active" onClick={reset}>
               <span className="btn-icon-label"><UploadCloud size={14} />Import more</span>
             </button>
+            {onCancel && (
+              <button onClick={cancelAndExit}>
+                <span className="btn-icon-label"><X size={13} />Close</span>
+              </button>
+            )}
           </div>
         </div>
       )}

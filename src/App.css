@@ -352,6 +352,11 @@ button.danger:hover { background: #c0392b; }
   margin-top: 10px; padding-top: 12px; border-top: 1px solid #16294a;
   font-size: 10.5px; color: #55657f; letter-spacing: 0.2px;
 }
+.import-cancel-btn {
+  margin-top: 12px; padding: 6px 14px; font-size: 12px; font-weight: 600;
+  background: transparent; border: 1px solid #1e3a5a; color: #7a90b0; border-radius: 6px; cursor: pointer;
+}
+.import-cancel-btn:hover { border-color: #e94560; color: #e94560; background: #1a0d14; }
 .import-progress { width: 100%; max-width: 320px; display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
 .import-progress-meta { display: flex; justify-content: space-between; font-size: 11px; color: #6b7a99; font-variant-numeric: tabular-nums; }
 .progress-bar { height: 5px; background: #0f3460; border-radius: 3px; overflow: hidden; }
@@ -756,6 +761,12 @@ label.export-opt:hover { background: #102138; }
   border-radius: 3px; color: #e0e0e0; font-size: 12px;
 }
 .tile-detail-field input:focus, .tile-detail-field select:focus { outline: 1px solid #e94560; }
+
+.tile-detail-prop { display: flex; flex-direction: column; gap: 3px; }
+.tile-detail-prop-row { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.tile-detail-prop-row input[type="checkbox"] { width: 13px; height: 13px; margin: 0; cursor: pointer; accent-color: #e94560; }
+.tile-detail-prop-name { font-size: 12px; color: #c0c0c0; }
+.tile-detail-prop-hint { font-size: 10px; color: #555; padding-left: 19px; }
 
 .tile-detail-fp-inputs { display: flex; align-items: center; gap: 6px; }
 .tile-detail-fp-inputs input { width: 56px; }

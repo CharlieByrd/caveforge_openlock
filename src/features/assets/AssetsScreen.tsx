@@ -93,7 +93,7 @@ export function AssetsScreen() {
       <div className="assets-content">
         {showImport ? (
           <div className="assets-import-area">
-            <ImportPanel />
+            <ImportPanel onCancel={() => setShowImport(false)} />
           </div>
         ) : (
           <>
