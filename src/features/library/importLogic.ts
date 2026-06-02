@@ -76,6 +76,7 @@ export interface ImportPlanItem {
   packName: string;
   category: string;
   name: string;
+  isProp: boolean;
 }
 
 export async function importFromPlan(
@@ -128,6 +129,7 @@ export async function importFromPlan(
           heightClass,
           hash,
           inStock: 0,
+          isProp: item.isProp,
         };
         await putTileType(tileType);
         imported++;
@@ -206,6 +208,7 @@ export async function importFiles(
         heightClass,
         hash,
         inStock: 0,
+        isProp: false,
       };
 
       await putTileType(tileType);

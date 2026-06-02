@@ -1,3 +1,4 @@
+import { RotateCcw } from 'lucide-react';
 import { useRenderStore } from '../../store/render';
 
 interface SliderProps {
@@ -53,7 +54,7 @@ export function RenderBar() {
       <Slider label="Fog"        value={Math.round(fogDensity * 1000)} min={0} max={120} onChange={v => set({ fogDensity: v / 1000 })} />
       <div className="render-bar-sep" />
       <SliderK label="Decimation" valueK={Math.round(maxTriangles / 1000)} min={100} max={1000} onChange={k => set({ maxTriangles: k * 1000 })} />
-      <button className="render-reset" onClick={reset} title="Reset to defaults">↺</button>
+      <button className="icon-btn render-reset" onClick={reset} data-tip="Reset render settings"><RotateCcw size={14} /></button>
     </div>
   );
 }

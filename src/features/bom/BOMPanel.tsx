@@ -7,12 +7,19 @@ export function BOMPanel() {
   const { map } = useMapStore();
   const { tileTypes, packs, updateTileType } = useLibraryStore();
   const [considerInventory, setConsiderInventory] = useState(true);
+  const [excludeProps, setExcludeProps] = useState(false);
 
   const packNames = useMemo(() => new Map(packs.map(p => [p.id, p.name])), [packs]);
 
+  const filteredPlacements = useMemo(() => {
+    if (!excludeProps) return map.placements;
+    const ttMap = new Map(tileTypes.map(t => [t.id, t]));
+    return map.placements.filter(p => !ttMap.get(p.tileTypeId)?.isProp);
+  }, [map.placements, tileTypes, excludeProps]);
+
   const bom = useMemo(
-    () => computeBOM(map.placements, tileTypes, packNames),
-    [map.placements, tileTypes, packNames],
+    () => computeBOM(filteredPlacements, tileTypes, packNames),
+    [filteredPlacements, tileTypes, packNames],
   );
 
   function downloadText(content: string, filename: string, mime: string) {
@@ -39,6 +46,10 @@ export function BOMPanel() {
           <label className="bom-toggle">
             <input type="checkbox" checked={considerInventory} onChange={e => setConsiderInventory(e.target.checked)} />
             Use inventory
+          </label>
+          <label className="bom-toggle">
+            <input type="checkbox" checked={excludeProps} onChange={e => setExcludeProps(e.target.checked)} />
+            Exclude props
           </label>
           <button onClick={() => downloadText(exportBOMCSV(bom.rows), `${mapSlug}_bom.csv`, 'text/csv')}>CSV</button>
           <button onClick={() => downloadText(exportBOMJSON(bom), `${mapSlug}_bom.json`, 'application/json')}>JSON</button>

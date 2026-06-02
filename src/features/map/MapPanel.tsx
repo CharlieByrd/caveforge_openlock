@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { Pencil, Plus, Upload, Trash2, Check, X, Layers } from 'lucide-react';
 import { useMapStore } from '../../store/map';
 import { useLibraryStore } from '../../store/library';
 import { importMapZip } from '../../lib/export/mapShare';
@@ -74,8 +75,8 @@ export function MapPanel({ compact }: Props) {
                 if (e.key === 'Escape') setCreating(false);
               }}
             />
-            <button onClick={commitNew}>✓</button>
-            <button onClick={() => setCreating(false)}>✕</button>
+            <button className="icon-btn" onClick={commitNew} data-tip="Create map"><Check size={15} /></button>
+            <button className="icon-btn danger-subtle" onClick={() => setCreating(false)} data-tip="Cancel"><X size={14} /></button>
           </div>
         ) : renaming ? (
           <div className="map-compact-rename">
@@ -90,6 +91,7 @@ export function MapPanel({ compact }: Props) {
               }}
               onBlur={commitRename}
             />
+            <button className="icon-btn" onClick={commitRename} data-tip="Save name"><Check size={15} /></button>
           </div>
         ) : (
           <>
@@ -102,14 +104,14 @@ export function MapPanel({ compact }: Props) {
                 <option key={m.id} value={m.id}>{m.name}</option>
               ))}
             </select>
-            <button className="map-compact-btn" title="Rename map" onClick={startRename}>✏</button>
-            <button className="map-compact-btn" title="New map" onClick={() => setCreating(true)}>+</button>
+            <button className="icon-btn map-compact-btn" data-tip="Rename map" onClick={startRename}><Pencil size={14} /></button>
+            <button className="icon-btn map-compact-btn" data-tip="New map" onClick={() => setCreating(true)}><Plus size={15} /></button>
             <button
-              className="map-compact-btn"
-              title="Import map pack (.zip)"
+              className="icon-btn map-compact-btn"
+              data-tip="Import map pack (.zip)"
               onClick={() => fileRef.current?.click()}
               disabled={importing}
-            >{importing ? '…' : '↑'}</button>
+            ><Upload size={14} /></button>
             <input
               ref={fileRef}
               type="file"
@@ -117,15 +119,21 @@ export function MapPanel({ compact }: Props) {
               style={{ display: 'none' }}
               onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImportFile(f); }}
             />
-            <button className="map-compact-btn danger-subtle" title="Clear map" onClick={handleClear}>✕</button>
+            <button className="icon-btn map-compact-btn danger-subtle" data-tip="Clear map" onClick={handleClear}><X size={14} /></button>
             {allMaps.length > 1 && (
               <button
-                className="map-compact-btn danger-subtle"
-                title={`Delete "${map.name}"`}
+                className="icon-btn map-compact-btn danger-subtle"
+                data-tip={`Delete "${map.name}"`}
                 onClick={() => handleDelete(map.id, map.name)}
-              >🗑</button>
+              ><Trash2 size={14} /></button>
             )}
-            <span className="map-tile-count" title={importMsg || undefined}>{importMsg || `${map.placements.length}t`}</span>
+            <span
+              className="map-tile-count"
+              data-tip={importMsg || 'Tiles placed on this map'}
+            >
+              <Layers size={12} />
+              {importMsg ? '✓' : map.placements.length}
+            </span>
           </>
         )}
       </div>
@@ -147,14 +155,14 @@ export function MapPanel({ compact }: Props) {
             onBlur={commitRename}
           />
         ) : (
-          <span className="map-name" onClick={startRename} title="Click to rename">{map.name}</span>
+          <span className="map-name" onClick={startRename} data-tip="Click to rename">{map.name}</span>
         )}
         <span className="map-count">{map.placements.length} tiles</span>
       </div>
 
       <div className="map-panel-actions">
-        <button onClick={() => setCreating(v => !v)} title="New map">+ New</button>
-        <button className="danger-subtle" onClick={handleClear} title="Clear all tiles">Clear</button>
+        <button onClick={() => setCreating(v => !v)} data-tip="New map">+ New</button>
+        <button className="danger-subtle" onClick={handleClear} data-tip="Clear all tiles">Clear</button>
       </div>
 
       {creating && (
@@ -175,15 +183,15 @@ export function MapPanel({ compact }: Props) {
         <div className="map-list">
           {others.map(m => (
             <div key={m.id} className="map-list-item">
-              <span className="map-list-name" onClick={() => switchMap(m.id)} title="Load map">
+              <span className="map-list-name" onClick={() => switchMap(m.id)} data-tip="Load map">
                 {m.name}
               </span>
               <span className="map-list-meta">{m.placements.length}t</span>
               <button
                 className="map-list-delete"
                 onClick={() => handleDelete(m.id, m.name)}
-                title="Delete map"
-              >✕</button>
+                data-tip="Delete map"
+              ><X size={11} /></button>
             </div>
           ))}
         </div>

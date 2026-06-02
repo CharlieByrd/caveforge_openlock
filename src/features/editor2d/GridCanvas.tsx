@@ -40,6 +40,7 @@ export function GridCanvas() {
   const mapRef            = useRef(map);
   const ttMapRef          = useRef<Map<string, TileType>>(new Map());
   const fpMapRef          = useRef<Map<string, { w: number; h: number }>>(new Map());
+  const collideFpMapRef   = useRef<Map<string, { w: number; h: number }>>(new Map());
   const selectedIdRef     = useRef(selectedTileTypeId);
   const selectedRotRef    = useRef(selectedRotation);
   const addPlacementRef   = useRef(addPlacement);
@@ -54,6 +55,8 @@ export function GridCanvas() {
   useEffect(() => {
     ttMapRef.current = new Map(tileTypes.map(t => [t.id, t]));
     fpMapRef.current = new Map(tileTypes.map(t => [t.id, t.footprint]));
+    // collideFpMapRef excludes props so they never block or are blocked by occupancy checks
+    collideFpMapRef.current = new Map(tileTypes.filter(t => !t.isProp).map(t => [t.id, t.footprint]));
     dirtyRef.current = true;
   }, [tileTypes]);
 
@@ -141,9 +144,10 @@ export function GridCanvas() {
       const tt = ttMapRef.current.get(selId);
       if (tt) {
         const eff = rotateFootprint(tt.footprint, selRot);
-        const occupied = buildOccupancySet(placements, fpMapRef.current);
-        const z = tt.heightClass === 'floor' ? 0 : 1;
-        const ok = canPlace(hc.gx, hc.gy, z, tt.footprint, selRot, occupied);
+        const isProp = tt.isProp === true;
+        const z = isProp ? 2 : (tt.heightClass === 'floor' ? 0 : 1);
+        const occupied = buildOccupancySet(placements, collideFpMapRef.current);
+        const ok = isProp ? true : canPlace(hc.gx, hc.gy, z, tt.footprint, selRot, occupied);
         const icon = iconCache.current.get(tt.id);
 
         ctx.save();
@@ -242,8 +246,14 @@ export function GridCanvas() {
     if (!selId) return;
     const tt = ttMapRef.current.get(selId);
     if (!tt) return;
-    const occupied = buildOccupancySet(mapRef.current.placements, fpMapRef.current);
-    const z = tt.heightClass === 'floor' ? 0 : 1;
+    const isProp = tt.isProp === true;
+    const z = isProp ? 2 : (tt.heightClass === 'floor' ? 0 : 1);
+    if (isProp) {
+      // Props bypass collision — place freely on top of anything
+      addPlacementRef.current(selId, gx, gy, z);
+      return;
+    }
+    const occupied = buildOccupancySet(mapRef.current.placements, collideFpMapRef.current);
     if (canPlace(gx, gy, z, tt.footprint, selRot, occupied)) {
       addPlacementRef.current(selId, gx, gy, z);
     }

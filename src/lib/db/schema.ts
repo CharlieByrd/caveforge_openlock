@@ -7,6 +7,13 @@ export interface Pack {
 export type HeightClass = 'floor' | 'wall' | 'prop';
 export type Rotation = 0 | 90 | 180 | 270;
 
+export interface ModelTransform {
+  rx: number;       // degrees around X-axis
+  ry: number;       // degrees around Y-axis
+  rz: number;       // degrees around Z-axis
+  offsetY?: number; // vertical offset in grid units (lift/sink)
+}
+
 export interface TileType {
   id: string;
   packId: string;
@@ -20,6 +27,8 @@ export interface TileType {
   hash: string;
   inStock: number;
   order?: number;
+  isProp?: boolean;
+  modelTransform?: ModelTransform;
 }
 
 export interface BlobRecord {

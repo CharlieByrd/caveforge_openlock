@@ -1,3 +1,4 @@
+import { v4 as uuid } from 'uuid';
 import { create } from 'zustand';
 import type { Pack, TileType } from '../lib/db/schema';
 import { getAllPacks, getAllTileTypes, putTileType, deleteTileType, putPack, deletePack as deletePackIDB } from '../lib/db/idb';
@@ -9,6 +10,7 @@ interface LibraryState {
   recentTileTypeIds: string[];
   loading: boolean;
   load: () => Promise<void>;
+  createPack: (name: string) => Promise<Pack>;
   updateTileType: (id: string, patch: Partial<TileType>) => Promise<void>;
   removeTileType: (id: string) => Promise<void>;
   selectTileType: (id: string | null) => void;
@@ -28,6 +30,13 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     set({ loading: true });
     const [packs, tileTypes] = await Promise.all([getAllPacks(), getAllTileTypes()]);
     set({ packs, tileTypes, loading: false });
+  },
+
+  createPack: async (name: string) => {
+    const pack: Pack = { id: uuid(), name, createdAt: Date.now() };
+    await putPack(pack);
+    set((s) => ({ packs: [...s.packs, pack] }));
+    return pack;
   },
 
   updateTileType: async (id, patch) => {

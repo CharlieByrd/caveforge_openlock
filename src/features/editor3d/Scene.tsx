@@ -5,35 +5,10 @@ import { useMapStore } from '../../store/map';
 import { useLibraryStore } from '../../store/library';
 import { useRenderStore, cssFilter } from '../../store/render';
 import { loadSTLBlob } from '../../lib/db/blobs';
-import { parseBinarySTL, extractGeometry } from '../../lib/stl/parseBinary';
 import { rotateFootprint, rotToRad } from '../../lib/grid/transform';
-import { CELL_MM } from '../../lib/grid/cell';
+import { buildGeometry, applyModelTransform, SCALE } from '../../lib/three/geometry';
 
-const SCALE = 1 / CELL_MM;
 const FRUSTUM = 24;
-
-const STL_TO_THREEJS = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
-
-function buildGeometry(blob: ArrayBuffer, maxTriangles: number): THREE.BufferGeometry {
-  parseBinarySTL(blob);
-  const { vertices, normals } = extractGeometry(blob, maxTriangles);
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-  geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-
-  geo.applyMatrix4(STL_TO_THREEJS);
-  geo.scale(SCALE, SCALE, SCALE);
-
-  geo.computeBoundingBox();
-  const bb = geo.boundingBox!;
-  geo.translate(
-    -((bb.min.x + bb.max.x) / 2),
-    -bb.min.y,
-    -((bb.min.z + bb.max.z) / 2)
-  );
-  return geo;
-}
 
 interface SceneState {
   renderer: THREE.WebGLRenderer;
@@ -167,6 +142,22 @@ export function Scene() {
     s.meshGroup.clear();
 
     const ttMap = new Map(tileTypes.map(t => [t.id, t]));
+
+    // For each grid cell, track the highest tile top (world units) so props can sit on top
+    const cellTopY = new Map<string, number>();
+    for (const p of map.placements) {
+      const tt = ttMap.get(p.tileTypeId);
+      if (!tt || tt.isProp || tt.heightClass !== 'floor') continue;
+      const eff = rotateFootprint(tt.footprint, p.rot);
+      const topY = tt.sizeMM.z * SCALE;
+      for (let dx = 0; dx < eff.w; dx++) {
+        for (let dy = 0; dy < eff.h; dy++) {
+          const key = `${p.gx + dx},${p.gy + dy}`;
+          cellTopY.set(key, Math.max(cellTopY.get(key) ?? 0, topY));
+        }
+      }
+    }
+
     let cancelled = false;
 
     async function load() {
@@ -183,7 +174,10 @@ export function Scene() {
         }
       }
 
+      // base geo cache: stlBlobKey → geometry (identity transform, shared)
       const geoCache = new Map<string, THREE.BufferGeometry>();
+      // oriented geo cache: "${stlBlobKey}|${rx}|${ry}|${rz}" → geometry with modelTransform applied
+      const orientedCache = new Map<string, THREE.BufferGeometry>();
       const matCache = new Map<string, THREE.MeshStandardMaterial>();
 
       // Load + build in chunks of CHUNK, add meshes as each chunk completes
@@ -212,20 +206,46 @@ export function Scene() {
           const baseGeo = geoCache.get(tt.stlBlobKey);
           if (!baseGeo) continue;
 
+          // Get or build oriented geometry for this tileType's modelTransform
+          const mt = tt.modelTransform;
+          const orientKey = mt
+            ? `${tt.stlBlobKey}|${mt.rx}|${mt.ry}|${mt.rz}`
+            : tt.stlBlobKey;
+          if (!orientedCache.has(orientKey)) {
+            orientedCache.set(orientKey, applyModelTransform(baseGeo, mt));
+          }
+          const orientedGeo = orientedCache.get(orientKey)!;
+
           if (!matCache.has(tt.id)) {
             matCache.set(tt.id, new THREE.MeshStandardMaterial({ color: 0x8a8a8a, roughness: 0.75 }));
           }
 
-          const mesh = new THREE.Mesh(baseGeo.clone(), matCache.get(tt.id)!);
+          const mesh = new THREE.Mesh(orientedGeo.clone(), matCache.get(tt.id)!);
           const eff = rotateFootprint(tt.footprint, p.rot);
-          mesh.position.set(p.gx + eff.w / 2, 0, p.gy + eff.h / 2);
+          const posY = tt.isProp ? (() => {
+            const key = `${p.gx},${p.gy}`;
+            if (cellTopY.has(key)) return cellTopY.get(key)!;
+            for (let dx = -1; dx <= 1; dx++) {
+              for (let dy = -1; dy <= 1; dy++) {
+                if (dx === 0 && dy === 0) continue;
+                const h = cellTopY.get(`${p.gx + dx},${p.gy + dy}`);
+                if (h !== undefined) return h;
+              }
+            }
+            return 0;
+          })() : 0;
+          const offsetY = mt?.offsetY ?? 0;
+          mesh.position.set(p.gx + eff.w / 2, posY + offsetY, p.gy + eff.h / 2);
           mesh.rotation.y = -rotToRad(p.rot);
           stateRef.current?.meshGroup.add(mesh);
         }
 
-        // Base geometries for this chunk no longer needed
+        // Dispose base geometries for this chunk; oriented ones cleaned below
         for (const key of chunkKeys) { geoCache.get(key)?.dispose(); geoCache.delete(key); }
       }
+
+      // Dispose oriented geometries
+      for (const geo of orientedCache.values()) geo.dispose();
     }
     load();
     return () => { cancelled = true; };

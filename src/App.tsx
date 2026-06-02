@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Undo2, Redo2, SlidersHorizontal } from 'lucide-react';
 import type { Rotation } from './lib/db/schema';
 import { MapPanel } from './features/map/MapPanel';
 import { LibraryTree } from './features/library/Tree';
@@ -11,6 +12,7 @@ import { SchematicPanel } from './features/schematic/SchematicPanel';
 import { AssetsScreen } from './features/assets/AssetsScreen';
 import { useLibraryStore } from './store/library';
 import { useMapStore } from './store/map';
+import './components/Tooltip';
 import './App.css';
 
 type AppTab = 'editor' | 'assets' | 'export' | 'schematic';
@@ -22,9 +24,12 @@ export default function App() {
   const [tab, setTab] = useState<AppTab>('editor');
   const [viewMode, setViewMode] = useState<ViewMode>('2d');
   const [showRender, setShowRender] = useState(false);
-
   useEffect(() => { loadLibrary(); }, [loadLibrary]);
   useEffect(() => { loadMap(); }, [loadMap]);
+
+  const { past, future } = useMapStore();
+  const canUndo = past.length > 0;
+  const canRedo = future.length > 0;
 
   const rotRef = useRef(selectedRotation);
   useEffect(() => { rotRef.current = selectedRotation; }, [selectedRotation]);
@@ -50,9 +55,9 @@ export default function App() {
         <div className="app-header-brand">
           <span className="app-title">OpenLOCK Tile Editor</span>
           <nav className="app-tabs">
-            <button className={tab === 'editor'  ? 'active' : ''} onClick={() => setTab('editor')}>Editor</button>
-            <button className={tab === 'assets'  ? 'active' : ''} onClick={() => setTab('assets')}>Assets</button>
-            <button className={tab === 'export'  ? 'active' : ''} onClick={() => setTab('export')}>Export</button>
+            <button className={tab === 'editor'    ? 'active' : ''} onClick={() => setTab('editor')}>Editor</button>
+            <button className={tab === 'assets'    ? 'active' : ''} onClick={() => setTab('assets')}>Assets</button>
+            <button className={tab === 'export'    ? 'active' : ''} onClick={() => setTab('export')}>Export</button>
             <button className={tab === 'schematic' ? 'active' : ''} onClick={() => setTab('schematic')}>Schematic</button>
           </nav>
         </div>
@@ -78,8 +83,20 @@ export default function App() {
             </div>
             <div className="toolbar-separator" />
             <div className="toolbar-group">
-              <button onClick={undo} title="Cmd+Z">↩</button>
-              <button onClick={redo} title="Cmd+Shift+Z">↪</button>
+              <button
+                className="icon-btn"
+                onClick={undo}
+                data-tip="Undo"
+                data-kbd="⌘Z"
+                style={{ opacity: canUndo ? 1 : 0.4 }}
+              ><Undo2 size={15} /></button>
+              <button
+                className="icon-btn"
+                onClick={redo}
+                data-tip="Redo"
+                data-kbd="⌘⇧Z"
+                style={{ opacity: canRedo ? 1 : 0.4 }}
+              ><Redo2 size={15} /></button>
             </div>
             <div className="toolbar-status">
               <span className="status-idle">Select tile · R to rotate</span>
@@ -88,8 +105,8 @@ export default function App() {
             <button
               className={showRender ? 'active' : ''}
               onClick={() => setShowRender(v => !v)}
-              title="Render settings"
-            >⚙ Render</button>
+              data-tip="Toggle 3D render settings"
+            ><span className="btn-icon-label"><SlidersHorizontal size={14} />Render</span></button>
           </div>
         )}
 
