@@ -101,6 +101,9 @@ CaveForge works with one STL per tile. Some models come as separate parts (e.g. 
 
 Multipart pieces are also a problem for print export since CaveForge can't group them automatically. **Recommended:** print these parts in advance and record them in your inventory so they're excluded from the print list.
 
+### Flat maps only
+CaveForge is a single-level, top-down editor. Vertical construction — multi-story builds, stacked floors, elevated walkways — is not supported. All tiles are placed on one plane.
+
 ### STL only
 3MF, OBJ, and other formats are not supported.
 
