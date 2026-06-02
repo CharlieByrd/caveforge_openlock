@@ -4,6 +4,8 @@ import type { MapDoc, Placement, Rotation } from '../lib/db/schema';
 import { getDB } from '../lib/db/idb';
 import { getAllMaps, deleteMap as dbDeleteMap } from '../lib/db/idb';
 
+const LS_LAST_MAP = 'caveforge:lastMapId';
+
 const INITIAL_MAP: MapDoc = {
   id: 'default',
   name: 'Untitled Map',
@@ -50,13 +52,17 @@ export const useMapStore = create<MapState>((set, get) => ({
   future: [],
   selectedRotation: 0,
 
-  async load(id = 'default') {
+  async load(id?: string) {
+    const resolvedId = id ?? localStorage.getItem(LS_LAST_MAP) ?? 'default';
     const db = await getDB();
-    const doc = await db.get('maps', id);
-    if (doc) set({ map: doc, past: [], future: [] });
-    else {
+    const doc = await db.get('maps', resolvedId);
+    if (doc) {
+      set({ map: doc, past: [], future: [] });
+      localStorage.setItem(LS_LAST_MAP, doc.id);
+    } else {
       await db.put('maps', INITIAL_MAP);
       set({ map: INITIAL_MAP, past: [], future: [] });
+      localStorage.setItem(LS_LAST_MAP, INITIAL_MAP.id);
     }
     await get().loadAllMaps();
   },
@@ -85,13 +91,17 @@ export const useMapStore = create<MapState>((set, get) => ({
     const db = await getDB();
     await db.put('maps', map);
     set({ map, past: [], future: [] });
+    localStorage.setItem(LS_LAST_MAP, map.id);
     await get().loadAllMaps();
   },
 
   async switchMap(id) {
     const db = await getDB();
     const doc = await db.get('maps', id);
-    if (doc) set({ map: doc, past: [], future: [] });
+    if (doc) {
+      set({ map: doc, past: [], future: [] });
+      localStorage.setItem(LS_LAST_MAP, doc.id);
+    }
   },
 
   async renameMap(name) {
@@ -116,11 +126,13 @@ export const useMapStore = create<MapState>((set, get) => ({
       const remaining = (await getAllMaps()).filter(m => m.id !== id);
       if (remaining.length > 0) {
         set({ map: remaining[0], past: [], future: [] });
+        localStorage.setItem(LS_LAST_MAP, remaining[0].id);
       } else {
         const fresh: MapDoc = { ...INITIAL_MAP, id: uuid(), createdAt: Date.now(), updatedAt: Date.now() };
         const db = await getDB();
         await db.put('maps', fresh);
         set({ map: fresh, past: [], future: [] });
+        localStorage.setItem(LS_LAST_MAP, fresh.id);
       }
     }
     await get().loadAllMaps();
