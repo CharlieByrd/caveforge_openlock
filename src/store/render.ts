@@ -12,13 +12,13 @@ export interface RenderSettings {
 }
 
 const DEFAULTS: RenderSettings = {
-  contrast: 100,
-  brightness: 100,
-  saturation: 100,
-  ambient: 0.7,
-  dirLight: 1.0,
+  contrast: 122,
+  brightness: 129,
+  saturation: 66,
+  ambient: 0.36,
+  dirLight: 2.35,
   fogDensity: 0,
-  maxTriangles: 30_000, // QEM preserves quality at lower counts vs old subsampling
+  maxTriangles: 195_000,
 };
 
 interface RenderState extends RenderSettings {
