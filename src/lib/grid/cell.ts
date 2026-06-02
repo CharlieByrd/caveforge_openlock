@@ -19,15 +19,10 @@ export function footprintValid(sizeMM: { x: number; y: number }, fp: { w: number
 
 export function heightClassOf(
   sizeMM: { x: number; y: number; z: number },
-  fp: { w: number; h: number }
+  // fp kept for signature compatibility
+  _fp: { w: number; h: number }
 ): HeightClass {
-  const z = sizeMM.z;
-  if (z < 15) return 'floor';
-  if (z >= 30) {
-    const narrow = fp.w === 1 || fp.h === 1;
-    if (narrow) return 'wall';
-  }
-  return 'prop';
+  return sizeMM.z < 15 ? 'floor' : 'wall';
 }
 
 export function bboxVolumeMM3(sizeMM: { x: number; y: number; z: number }): number {

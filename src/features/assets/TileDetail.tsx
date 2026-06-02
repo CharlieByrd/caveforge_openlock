@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import type { TileType, HeightClass } from '../../lib/db/schema';
 import { useLibraryStore } from '../../store/library';
+import { heightClassOf } from '../../lib/grid/cell';
 import { AssetPreview } from './AssetPreview';
 
 interface Props {
@@ -16,6 +17,7 @@ export function TileDetail({ tile, onClose }: Props) {
   const [fpW, setFpW] = useState(tile.footprint.w);
   const [fpH, setFpH] = useState(tile.footprint.h);
   const [heightClass, setHeightClass] = useState<HeightClass>(tile.heightClass);
+  const [isProp, setIsProp] = useState(tile.isProp ?? false);
   const [inStock, setInStock] = useState(tile.inStock);
   const [rx, setRx] = useState(tile.modelTransform?.rx ?? 0);
   const [ry, setRy] = useState(tile.modelTransform?.ry ?? 0);
@@ -48,6 +50,7 @@ export function TileDetail({ tile, onClose }: Props) {
     setFpW(tile.footprint.w);
     setFpH(tile.footprint.h);
     setHeightClass(tile.heightClass);
+    setIsProp(tile.isProp ?? false);
     setInStock(tile.inStock);
     const nrx = tile.modelTransform?.rx ?? 0;
     const nry = tile.modelTransform?.ry ?? 0;
@@ -83,7 +86,7 @@ export function TileDetail({ tile, onClose }: Props) {
     await updateTileType(tile.id, {
       name, packId, category,
       footprint: { w: fpW, h: fpH },
-      heightClass, inStock,
+      heightClass, isProp, inStock,
       modelTransform: { rx, ry, rz, offsetY },
     });
     setDirty(false);
@@ -136,6 +139,23 @@ export function TileDetail({ tile, onClose }: Props) {
             <option value="wall">wall</option>
             <option value="prop">prop</option>
           </select>
+        </div>
+
+        <div className="tile-detail-prop">
+          <label className="tile-detail-prop-row">
+            <input
+              type="checkbox"
+              checked={isProp}
+              onChange={(e) => {
+                const on = e.target.checked;
+                setIsProp(on);
+                setHeightClass(on ? 'prop' : heightClassOf(tile.sizeMM, { w: fpW, h: fpH }));
+                mark();
+              }}
+            />
+            <span className="tile-detail-prop-name">Prop</span>
+          </label>
+          <div className="tile-detail-prop-hint">Free placement, excluded from BOM/export</div>
         </div>
 
         <div className="tile-detail-field">

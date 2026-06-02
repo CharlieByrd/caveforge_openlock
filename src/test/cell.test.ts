@@ -53,15 +53,15 @@ describe('heightClassOf', () => {
     expect(heightClassOf(size, fp)).toBe('wall');
   });
 
-  it('z=30, fp 2x2 → prop (not narrow)', () => {
+  it('z=30, fp 2x2 → wall (z>=15)', () => {
     const size = { x: 50.80, y: 50.80, z: 30 };
     const fp = footprintOf(size);
-    expect(heightClassOf(size, fp)).toBe('prop');
+    expect(heightClassOf(size, fp)).toBe('wall');
   });
 
-  it('z=20 → prop (between floor<15 and wall>=30)', () => {
+  it('z=20 → wall (z>=15)', () => {
     const size = { x: 25.40, y: 25.40, z: 20 };
     const fp = footprintOf(size);
-    expect(heightClassOf(size, fp)).toBe('prop');
+    expect(heightClassOf(size, fp)).toBe('wall');
   });
 });

@@ -109,7 +109,7 @@ export async function importFromPlan(
       const parsed = parseBinarySTL(raw);
       const sizeMM = bboxSizeMM(parsed.bbox);
       const fp = footprintOf(sizeMM);
-      const heightClass = heightClassOf(sizeMM, fp);
+      const heightClass = item.isProp ? 'prop' : heightClassOf(sizeMM, fp);
 
       const pack = await getOrCreatePack(item.packName);
 

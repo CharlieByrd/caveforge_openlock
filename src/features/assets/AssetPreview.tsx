@@ -105,12 +105,15 @@ export function AssetPreview({ tile, rx, ry, rz, offsetY }: Props) {
       baseGeoRef.current = null;
 
       try {
-        baseGeoRef.current = buildGeometry(blob, 20000);
+        baseGeoRef.current = buildGeometry(blob, Infinity);
       } catch {
         return;
       }
 
-      if (!cancelled) swapMesh(baseGeoRef.current);
+      if (!cancelled) {
+        swapMesh(baseGeoRef.current);
+        fitCamera(baseGeoRef.current);
+      }
     }
 
     loadBase();
@@ -141,11 +144,29 @@ export function AssetPreview({ tile, rx, ry, rz, offsetY }: Props) {
       return;
     }
 
-    const mat = new THREE.MeshStandardMaterial({ color: 0x8a8a8a, roughness: 0.75 });
+    const mat = new THREE.MeshStandardMaterial({ color: 0x8a8a8a, roughness: 0.75, flatShading: true });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.y = offsetY;
     t.scene.add(mesh);
     t.mesh = mesh;
+  }
+
+  function fitCamera(geo: THREE.BufferGeometry) {
+    const t = threeRef.current;
+    if (!t) return;
+    const bb = new THREE.Box3().setFromBufferAttribute(
+      geo.attributes.position as THREE.BufferAttribute
+    );
+    const center = new THREE.Vector3();
+    bb.getCenter(center);
+    const size = new THREE.Vector3();
+    bb.getSize(size);
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const dist = (maxDim / (2 * Math.tan((t.camera.fov / 2) * (Math.PI / 180)))) * 1.8;
+    t.camera.position.set(dist * 0.7, center.y + dist * 0.5, dist);
+    t.controls.target.copy(center);
+    t.camera.lookAt(center);
+    t.controls.update();
   }
 
   return (
