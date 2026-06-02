@@ -19,6 +19,7 @@ export function TileDetail({ tile, onClose }: Props) {
   const [heightClass, setHeightClass] = useState<HeightClass>(tile.heightClass);
   const [isProp, setIsProp] = useState(tile.isProp ?? false);
   const [inStock, setInStock] = useState(tile.inStock);
+  const [color, setColor] = useState(tile.color ?? '#8a8a8a');
   const [rx, setRx] = useState(tile.modelTransform?.rx ?? 0);
   const [ry, setRy] = useState(tile.modelTransform?.ry ?? 0);
   const [rz, setRz] = useState(tile.modelTransform?.rz ?? 0);
@@ -52,6 +53,7 @@ export function TileDetail({ tile, onClose }: Props) {
     setHeightClass(tile.heightClass);
     setIsProp(tile.isProp ?? false);
     setInStock(tile.inStock);
+    setColor(tile.color ?? '#8a8a8a');
     const nrx = tile.modelTransform?.rx ?? 0;
     const nry = tile.modelTransform?.ry ?? 0;
     const nrz = tile.modelTransform?.rz ?? 0;
@@ -87,6 +89,7 @@ export function TileDetail({ tile, onClose }: Props) {
       name, packId, category,
       footprint: { w: fpW, h: fpH },
       heightClass, isProp, inStock,
+      color,
       modelTransform: { rx, ry, rz, offsetY },
     });
     setDirty(false);
@@ -164,6 +167,16 @@ export function TileDetail({ tile, onClose }: Props) {
             type="number" min={0} value={inStock}
             onChange={(e) => { setInStock(Math.max(0, parseInt(e.target.value) || 0)); mark(); }}
           />
+        </div>
+
+        <div className="tile-detail-field tile-detail-color">
+          <label>3D Color</label>
+          <input
+            type="color"
+            value={color}
+            onChange={(e) => { setColor(e.target.value); mark(); }}
+          />
+          <span className="tile-detail-color-val">{color}</span>
         </div>
 
         <div className="tile-detail-size">

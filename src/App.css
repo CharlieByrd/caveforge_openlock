@@ -772,6 +772,10 @@ label.export-opt:hover { background: #102138; }
 .tile-detail-fp-inputs { display: flex; align-items: center; gap: 6px; }
 .tile-detail-fp-inputs input { width: 56px; }
 .tile-detail-fp-inputs span { color: #666; }
+.tile-detail-color { flex-direction: row !important; align-items: center; gap: 8px; }
+.tile-detail-color label { min-width: 56px; }
+.tile-detail-color input[type="color"] { width: 32px; height: 24px; border: 1px solid #333; border-radius: 4px; padding: 1px; background: none; cursor: pointer; }
+.tile-detail-color-val { font-size: 11px; color: #888; font-family: monospace; }
 
 .tile-detail-size {
   font-size: 11px; color: #555; padding: 6px 0;

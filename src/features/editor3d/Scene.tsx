@@ -68,6 +68,7 @@ function placementSig(p: Placement, tt: TileType, maxTriangles: number): string 
     mt?.rx ?? 0, mt?.ry ?? 0, mt?.rz ?? 0, mt?.offsetY ?? 0,
     tt.footprint.w, tt.footprint.h, tt.sizeMM.z,
     tt.isProp ? 1 : 0, tt.heightClass,
+    tt.color ?? '',
     maxTriangles,
   ].join(',');
 }
@@ -334,6 +335,7 @@ export function Scene({ active }: { active: boolean }) {
         if (!sc.matCache.has(info.tt.id)) {
           sc.matCache.set(info.tt.id, new THREE.MeshStandardMaterial({ color: 0x8a8a8a, roughness: 0.75 }));
         }
+        sc.matCache.get(info.tt.id)!.color.set(info.tt.color ?? '#8a8a8a');
         const cap = nextCapacity(1);
         const imesh = new THREE.InstancedMesh(template, sc.matCache.get(info.tt.id)!, cap);
         imesh.count = 0;

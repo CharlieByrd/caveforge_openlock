@@ -29,6 +29,7 @@ export interface TileType {
   order?: number;
   isProp?: boolean;
   modelTransform?: ModelTransform;
+  color?: string; // hex, e.g. "#8a8a8a"
 }
 
 export interface BlobRecord {
