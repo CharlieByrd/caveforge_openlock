@@ -8,7 +8,7 @@ export interface RenderSettings {
   ambient: number;       // Three.js intensity — 0-2
   dirLight: number;      // Three.js intensity — 0-4
   fogDensity: number;    // FogExp2 density — 0-0.12
-  maxTriangles: number;  // decimation cap per STL (1k–200k, Infinity = off)
+  maxTriangles: number;  // QEM simplify target per STL (1k–1000k, Infinity = off)
 }
 
 const DEFAULTS: RenderSettings = {
@@ -18,7 +18,7 @@ const DEFAULTS: RenderSettings = {
   ambient: 0.7,
   dirLight: 1.0,
   fogDensity: 0,
-  maxTriangles: 100_000,
+  maxTriangles: 30_000, // QEM preserves quality at lower counts vs old subsampling
 };
 
 interface RenderState extends RenderSettings {

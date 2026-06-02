@@ -118,7 +118,7 @@ export function AssetPreview({ tile, rx, ry, rz, offsetY }: Props) {
       baseGeoRef.current = null;
 
       try {
-        baseGeoRef.current = buildGeometry(blob, Infinity);
+        baseGeoRef.current = await buildGeometry(tile.stlBlobKey, blob, Infinity);
       } catch {
         return;
       }

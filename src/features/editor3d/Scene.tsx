@@ -12,10 +12,26 @@ import type { Placement } from '../../lib/db/schema';
 
 const FRUSTUM = 24;
 
-interface MeshEntry {
-  mesh: THREE.Mesh;
+/** groupKey = orientKey + "::" + tileTypeId — one InstancedMesh per unique pair. */
+function toGroupKey(orientKey: string, tileTypeId: string): string {
+  return `${orientKey}::${tileTypeId}`;
+}
+
+/** Next power-of-two >= n, min 16. Used to preallocate instance buffers with headroom. */
+function nextCapacity(n: number): number {
+  let c = 16;
+  while (c < n) c <<= 1;
+  return c;
+}
+
+interface InstanceGroup {
+  mesh: THREE.InstancedMesh;
   orientKey: string;
-  sig: string;
+  tileTypeId: string;
+  capacity: number;           // allocated instance buffer size
+  usedCount: number;          // live instances occupying slots 0..usedCount-1
+  slots: Map<string, number>; // uid → slotIdx
+  slotToUid: Map<number, string>; // slotIdx → uid (for swap-remove)
 }
 
 interface SceneState {
@@ -34,10 +50,13 @@ interface SceneState {
   // On-demand rendering (P1)
   needsRender: boolean;
   // Persistent geometry/material caches across rebuilds (P0 + L1)
-  geoTemplates: Map<string, THREE.BufferGeometry>;     // orientKey → template
-  geoTemplateRefs: Map<string, Set<string>>;            // orientKey → Set<uid>
+  geoTemplates: Map<string, THREE.BufferGeometry>;     // orientKey → shared template (never cloned)
+  geoTemplateRefs: Map<string, Set<string>>;            // orientKey → Set<groupKey> (refcount)
   matCache: Map<string, THREE.MeshStandardMaterial>;   // tileTypeId → material
-  meshByUid: Map<string, MeshEntry>;
+  // InstancedMesh model: one mesh per (orientKey, tileTypeId) pair
+  instByGroup: Map<string, InstanceGroup>;   // groupKey → InstanceGroup
+  uidToGroup: Map<string, { groupKey: string; slotIdx: number }>; // uid → placement in group
+  sigByUid: Map<string, string>; // uid → last-built placement sig (for stale detection)
 }
 
 // Compute a per-placement geometry signature. Changing any field forces a mesh rebuild.
@@ -175,7 +194,9 @@ export function Scene({ active }: { active: boolean }) {
       geoTemplates: new Map(),
       geoTemplateRefs: new Map(),
       matCache: new Map(),
-      meshByUid: new Map(),
+      instByGroup: new Map(),
+      uidToGroup: new Map(),
+      sigByUid: new Map(),
     };
     stateRef.current = s;
 
@@ -215,14 +236,17 @@ export function Scene({ active }: { active: boolean }) {
       ro.disconnect();
       perspCtrl.dispose();
       orthoCtrl.dispose();
-      // Dispose all persistent geometry/material caches (P0 + L1)
+      // Dispose all persistent geometry/material caches
       for (const geo of s.geoTemplates.values()) geo.dispose();
       for (const mat of s.matCache.values()) mat.dispose();
-      for (const { mesh } of s.meshByUid.values()) mesh.geometry.dispose();
+      // InstancedMesh objects share geometry with geoTemplates; just remove from scene
+      for (const group of s.instByGroup.values()) s.meshGroup.remove(group.mesh);
       s.geoTemplates.clear();
       s.geoTemplateRefs.clear();
       s.matCache.clear();
-      s.meshByUid.clear();
+      s.instByGroup.clear();
+      s.uidToGroup.clear();
+      s.sigByUid.clear();
       // Dispose renderer WebGL context
       renderer.dispose();
       stateRef.current = null;
@@ -257,7 +281,7 @@ export function Scene({ active }: { active: boolean }) {
   // Track previous maxTriangles to detect changes that require full template purge
   const prevMaxTriRef = useRef<number>(renderSettings.maxTriangles);
 
-  // ---- Incremental mesh rebuild — diff by placement uid (P0 + L1) ----------------
+  // ---- Incremental mesh rebuild — diff by placement uid (InstancedMesh model) ------
   useEffect(() => {
     const s = stateRef.current;
     if (!s) return;
@@ -265,21 +289,148 @@ export function Scene({ active }: { active: boolean }) {
     const ttMap = ttMapRef.current;
     const maxTriangles = renderSettings.maxTriangles;
 
-    // If maxTriangles changed, all templates are stale → purge everything for full rebuild
+    // If maxTriangles changed, all geo templates are stale → purge everything for full rebuild
     if (prevMaxTriRef.current !== maxTriangles) {
       prevMaxTriRef.current = maxTriangles;
       for (const geo of s.geoTemplates.values()) geo.dispose();
-      for (const { mesh } of s.meshByUid.values()) {
-        s.meshGroup.remove(mesh);
-        mesh.geometry.dispose();
-      }
+      for (const group of s.instByGroup.values()) s.meshGroup.remove(group.mesh);
       s.geoTemplates.clear();
       s.geoTemplateRefs.clear();
-      s.meshByUid.clear();
+      s.instByGroup.clear();
+      s.uidToGroup.clear();
+      s.sigByUid.clear();
       // Materials are still valid — just the geometry poly count changed
     }
 
-    // 1. Compute new per-placement sigs
+    // ---- helpers ----------------------------------------------------------------
+
+    /** Build instance world-matrix for a placement. */
+    function placementMatrix(info: PlacementInfo, cellTopY: Map<string, number>): THREE.Matrix4 {
+      const mt = info.tt.modelTransform;
+      const eff = rotateFootprint(info.tt.footprint, info.p.rot);
+      const posY = info.tt.isProp ? resolvePropY(info.p, cellTopY) : 0;
+      const offsetY = mt?.offsetY ?? 0;
+      const pos = new THREE.Vector3(
+        info.p.gx + eff.w / 2,
+        posY + offsetY,
+        info.p.gy + eff.h / 2,
+      );
+      const quat = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 1, 0),
+        -rotToRad(info.p.rot),
+      );
+      const scale = new THREE.Vector3(1, 1, 1);
+      return new THREE.Matrix4().compose(pos, quat, scale);
+    }
+
+    /** Add uid to its InstanceGroup, growing capacity if needed. */
+    function addInstance(sc: SceneState, info: PlacementInfo, m: THREE.Matrix4) {
+      const gk = toGroupKey(info.ok, info.tt.id);
+      let group = sc.instByGroup.get(gk);
+
+      if (!group) {
+        // Create new InstancedMesh for this (orientKey, tileTypeId) pair
+        const template = sc.geoTemplates.get(info.ok)!;
+        if (!sc.matCache.has(info.tt.id)) {
+          sc.matCache.set(info.tt.id, new THREE.MeshStandardMaterial({ color: 0x8a8a8a, roughness: 0.75 }));
+        }
+        const cap = nextCapacity(1);
+        const imesh = new THREE.InstancedMesh(template, sc.matCache.get(info.tt.id)!, cap);
+        imesh.count = 0;
+        sc.meshGroup.add(imesh);
+        // Refcount geometry template by groupKey (not uid — one per group)
+        const refs = sc.geoTemplateRefs.get(info.ok) ?? new Set<string>();
+        refs.add(gk);
+        sc.geoTemplateRefs.set(info.ok, refs);
+        group = {
+          mesh: imesh, orientKey: info.ok, tileTypeId: info.tt.id,
+          capacity: cap, usedCount: 0,
+          slots: new Map(), slotToUid: new Map(),
+        };
+        sc.instByGroup.set(gk, group);
+      } else if (group.usedCount === group.capacity) {
+        // Grow: double capacity, recreate InstancedMesh, copy matrices
+        const newCap = group.capacity * 2;
+        const template = sc.geoTemplates.get(info.ok)!;
+        const mat = sc.matCache.get(info.tt.id)!;
+        const newMesh = new THREE.InstancedMesh(template, mat, newCap);
+        newMesh.count = group.usedCount;
+        const tmp = new THREE.Matrix4();
+        for (let i = 0; i < group.usedCount; i++) {
+          group.mesh.getMatrixAt(i, tmp);
+          newMesh.setMatrixAt(i, tmp);
+        }
+        sc.meshGroup.remove(group.mesh);
+        sc.meshGroup.add(newMesh);
+        group.mesh = newMesh;
+        group.capacity = newCap;
+      }
+
+      const slotIdx = group.usedCount++;
+      group.mesh.setMatrixAt(slotIdx, m);
+      group.mesh.count = group.usedCount;
+      group.mesh.instanceMatrix.needsUpdate = true;
+      group.slots.set(info.p.uid, slotIdx);
+      group.slotToUid.set(slotIdx, info.p.uid);
+      sc.uidToGroup.set(info.p.uid, { groupKey: gk, slotIdx });
+      sc.sigByUid.set(info.p.uid, info.sig);
+    }
+
+    /** Remove uid from its InstanceGroup using swap-remove. */
+    function removeInstance(sc: SceneState, uid: string) {
+      const loc = sc.uidToGroup.get(uid);
+      if (!loc) return;
+      const { groupKey, slotIdx } = loc;
+      const group = sc.instByGroup.get(groupKey);
+      if (!group) return;
+
+      const lastIdx = group.usedCount - 1;
+      if (slotIdx !== lastIdx) {
+        // Swap last instance into freed slot
+        const lastUid = group.slotToUid.get(lastIdx)!;
+        const tmp = new THREE.Matrix4();
+        group.mesh.getMatrixAt(lastIdx, tmp);
+        group.mesh.setMatrixAt(slotIdx, tmp);
+        group.mesh.instanceMatrix.needsUpdate = true;
+        group.slots.set(lastUid, slotIdx);
+        group.slotToUid.set(slotIdx, lastUid);
+        sc.uidToGroup.set(lastUid, { groupKey, slotIdx });
+      }
+      group.slots.delete(uid);
+      group.slotToUid.delete(lastIdx);
+      sc.uidToGroup.delete(uid);
+      sc.sigByUid.delete(uid);
+      group.usedCount--;
+      group.mesh.count = group.usedCount;
+      group.mesh.instanceMatrix.needsUpdate = true;
+
+      // If group is now empty, remove its InstancedMesh and release geo refcount
+      if (group.usedCount === 0) {
+        sc.meshGroup.remove(group.mesh);
+        sc.instByGroup.delete(groupKey);
+        const refs = sc.geoTemplateRefs.get(group.orientKey);
+        if (refs) {
+          refs.delete(groupKey);
+          if (refs.size === 0) {
+            sc.geoTemplates.get(group.orientKey)?.dispose();
+            sc.geoTemplates.delete(group.orientKey);
+            sc.geoTemplateRefs.delete(group.orientKey);
+          }
+        }
+      }
+    }
+
+    /** Update instance matrix in-place for prop Y refresh (no remove+add). */
+    function updateInstanceMatrix(sc: SceneState, uid: string, m: THREE.Matrix4) {
+      const loc = sc.uidToGroup.get(uid);
+      if (!loc) return;
+      const group = sc.instByGroup.get(loc.groupKey);
+      if (!group) return;
+      group.mesh.setMatrixAt(loc.slotIdx, m);
+      group.mesh.instanceMatrix.needsUpdate = true;
+    }
+
+    // ---- 1. Compute new per-placement sigs --------------------------------------
     interface PlacementInfo {
       p: Placement;
       tt: TileType;
@@ -297,59 +448,44 @@ export function Scene({ active }: { active: boolean }) {
       });
     }
 
-    // 2. Remove stale meshes (uid gone or sig changed)
-    for (const [uid, entry] of s.meshByUid) {
+    // ---- 2. Remove stale instances (uid gone or sig changed) --------------------
+    // Collect stale uids first, then remove (avoid mutating Map during iteration)
+    const staleUids: string[] = [];
+    for (const uid of s.uidToGroup.keys()) {
       const info = newInfos.get(uid);
-      if (!info || info.sig !== entry.sig) {
-        s.meshGroup.remove(entry.mesh);
-        entry.mesh.geometry.dispose();
-        // Decref template
-        const refs = s.geoTemplateRefs.get(entry.orientKey);
-        if (refs) {
-          refs.delete(uid);
-          if (refs.size === 0) {
-            s.geoTemplates.get(entry.orientKey)?.dispose();
-            s.geoTemplates.delete(entry.orientKey);
-            s.geoTemplateRefs.delete(entry.orientKey);
-          }
-        }
-        s.meshByUid.delete(uid);
+      if (!info || s.sigByUid.get(uid) !== info.sig) {
+        staleUids.push(uid);
       }
     }
+    for (const uid of staleUids) removeInstance(s, uid);
 
-    // 3. Which UIDs need adding?
+    // ---- 3. Which UIDs need adding? ---------------------------------------------
     const toAdd: PlacementInfo[] = [];
     for (const [uid, info] of newInfos) {
-      if (!s.meshByUid.has(uid)) toAdd.push(info);
+      if (!s.uidToGroup.has(uid)) toAdd.push(info);
     }
 
-    // Helper: update prop Y positions for all live props after floor changes
+    // Helper: update prop Y for all live props (uses updateInstanceMatrix)
     function updatePropPositions(sc: SceneState, cellTopY: Map<string, number>) {
-      for (const [uid, entry] of sc.meshByUid) {
+      for (const [uid] of sc.uidToGroup) {
         const info = newInfos.get(uid);
         if (!info || !info.tt.isProp) continue;
-        const mt = info.tt.modelTransform;
-        const eff = rotateFootprint(info.tt.footprint, info.p.rot);
-        const posY = resolvePropY(info.p, cellTopY);
-        const offsetY = mt?.offsetY ?? 0;
-        entry.mesh.position.set(info.p.gx + eff.w / 2, posY + offsetY, info.p.gy + eff.h / 2);
+        updateInstanceMatrix(sc, uid, placementMatrix(info, cellTopY));
       }
     }
 
     if (toAdd.length === 0) {
-      // No new meshes — just refresh prop Y in case floor tiles moved
+      // No new instances — just refresh prop Y in case floor heights changed
       updatePropPositions(s, buildCellTopY(map.placements, ttMap));
       s.needsRender = true;
       return;
     }
 
-    // 4. Identify which STL blobs need loading for missing templates
-    //    Group by stlBlobKey so we load each blob once even if multiple orientations needed
+    // ---- 4. Identify which STL blobs need loading for missing geo templates ------
     const blobToOrients = new Map<string, { ok: string; tt: TileType }[]>();
     for (const info of toAdd) {
-      if (s.geoTemplates.has(info.ok)) continue; // template already present
+      if (s.geoTemplates.has(info.ok)) continue;
       const list = blobToOrients.get(info.tt.stlBlobKey) ?? [];
-      // Dedupe: same orientKey may appear multiple times in toAdd
       if (!list.some(x => x.ok === info.ok)) {
         list.push({ ok: info.ok, tt: info.tt });
       }
@@ -361,7 +497,7 @@ export function Scene({ active }: { active: boolean }) {
     const uniqueSTLKeys = [...blobToOrients.keys()];
 
     async function load(sc: SceneState) {
-      // Load missing STL blobs and build geometry templates
+      // Load missing STL blobs and build geo templates
       for (let i = 0; i < uniqueSTLKeys.length; i += CHUNK) {
         if (cancelled) return;
         const chunkKeys = uniqueSTLKeys.slice(i, i + CHUNK);
@@ -378,7 +514,7 @@ export function Scene({ active }: { active: boolean }) {
           if (!blob) continue;
           let baseGeo: THREE.BufferGeometry;
           try {
-            baseGeo = buildGeometry(blob, maxTriangles);
+            baseGeo = await buildGeometry(key, blob, maxTriangles);
           } catch {
             continue; // skip bad STL
           }
@@ -389,51 +525,27 @@ export function Scene({ active }: { active: boolean }) {
             if (!sc.geoTemplates.has(ok)) {
               const template = applyModelTransform(baseGeo, tt.modelTransform);
               sc.geoTemplates.set(ok, template);
-              sc.geoTemplateRefs.set(ok, new Set());
+              // geoTemplateRefs created lazily in addInstance
             }
           }
-          baseGeo.dispose(); // base geo no longer needed; templates own the GPU data
+          baseGeo.dispose(); // base no longer needed; templates own the GPU data
         }
       }
 
       if (cancelled) return;
 
-      // Compute cellTopY from ALL current placements (floors only)
+      // ---- 5. Add instances for new placements ----------------------------------
       const cellTopY = buildCellTopY(map.placements, ttMap);
-
-      // 5. Instantiate meshes for all new placements
       for (const info of toAdd) {
         if (cancelled) return;
-        const template = sc.geoTemplates.get(info.ok);
-        if (!template) continue; // STL failed to load
-
-        // Ensure material exists for this tile type
-        if (!sc.matCache.has(info.tt.id)) {
-          sc.matCache.set(info.tt.id, new THREE.MeshStandardMaterial({ color: 0x8a8a8a, roughness: 0.75 }));
-        }
-
-        const mesh = new THREE.Mesh(
-          template.clone(), // each mesh owns its geometry (for position-bake freedom)
-          sc.matCache.get(info.tt.id)!,
-        );
-
-        const mt = info.tt.modelTransform;
-        const eff = rotateFootprint(info.tt.footprint, info.p.rot);
-        const posY = info.tt.isProp ? resolvePropY(info.p, cellTopY) : 0;
-        const offsetY = mt?.offsetY ?? 0;
-        mesh.position.set(info.p.gx + eff.w / 2, posY + offsetY, info.p.gy + eff.h / 2);
-        mesh.rotation.y = -rotToRad(info.p.rot);
-
-        sc.meshGroup.add(mesh);
-
-        // Register in caches
-        sc.meshByUid.set(info.p.uid, { mesh, orientKey: info.ok, sig: info.sig });
-        sc.geoTemplateRefs.get(info.ok)!.add(info.p.uid);
+        if (!sc.geoTemplates.has(info.ok)) continue; // STL failed to load
+        const m = placementMatrix(info, cellTopY);
+        addInstance(sc, info, m);
       }
 
       if (cancelled) return;
 
-      // Update all props' Y positions in case new floor tiles changed cell heights
+      // Update all prop Y positions in case new floor tiles changed cell heights
       updatePropPositions(sc, buildCellTopY(map.placements, ttMap));
       sc.needsRender = true;
     }

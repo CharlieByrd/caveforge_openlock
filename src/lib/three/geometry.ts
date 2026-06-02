@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { extractGeometry } from '../stl/parseBinary';
+import { computeGeometry } from './geomWorkerClient';
 import { CELL_MM } from '../grid/cell';
 import type { ModelTransform } from '../db/schema';
 
@@ -7,25 +7,22 @@ export const SCALE = 1 / CELL_MM;
 
 export const STL_TO_THREEJS = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
 
-/** Build base geometry from raw STL blob. Centers X/Z and seats minY=0. */
-export function buildGeometry(blob: ArrayBuffer, maxTriangles: number): THREE.BufferGeometry {
-  // extractGeometry validates the buffer, so no separate parseBinarySTL pass needed
-  const { vertices, normals } = extractGeometry(blob, maxTriangles);
+/**
+ * Build base geometry from raw STL blob. Centers X/Z and seats minY=0.
+ * Runs off the main thread (geomWorker): parses → indexes → QEM simplifies
+ * (if over budget) → computes smooth vertex normals → quantizes normals to Int8.
+ * Returns an indexed BufferGeometry with Float32 positions + Int8 normals.
+ */
+export async function buildGeometry(id: string, blob: ArrayBuffer, maxTriangles: number): Promise<THREE.BufferGeometry> {
+  const result = await computeGeometry(id, blob, maxTriangles);
+
+  if (result.error) throw new Error(result.error);
 
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-  geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-
-  geo.applyMatrix4(STL_TO_THREEJS);
-  geo.scale(SCALE, SCALE, SCALE);
-
-  geo.computeBoundingBox();
-  const bb = geo.boundingBox!;
-  geo.translate(
-    -((bb.min.x + bb.max.x) / 2),
-    -bb.min.y,
-    -((bb.min.z + bb.max.z) / 2),
-  );
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(result.positions, 3));
+  // Int8 normalized normals: three.js maps ±127 → ±1 in the shader, identical to Float32
+  geo.setAttribute('normal', new THREE.Int8BufferAttribute(result.normals_i8, 3, true));
+  geo.setIndex(new THREE.BufferAttribute(result.indices, 1));
   return geo;
 }
 
