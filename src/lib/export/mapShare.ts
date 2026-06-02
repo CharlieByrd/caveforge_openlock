@@ -1,4 +1,3 @@
-import JSZip from 'jszip';
 import { v4 as uuid } from 'uuid';
 import type { Pack, TileType, MapDoc } from '../db/schema';
 import { getAllTileTypes, getAllPacks, putPack, putTileType, putMap } from '../db/idb';
@@ -12,6 +11,7 @@ export interface MapShareManifest {
 }
 
 export async function exportMapZip(map: MapDoc, allTileTypes: TileType[], allPacks: Pack[]): Promise<Blob> {
+  const { default: JSZip } = await import('jszip');
   const usedTileTypeIds = new Set(map.placements.map((p) => p.tileTypeId));
   const usedTileTypes = allTileTypes.filter((t) => usedTileTypeIds.has(t.id));
   const usedPackIds = new Set(usedTileTypes.map((t) => t.packId));
@@ -53,6 +53,7 @@ export interface ImportResult {
 }
 
 export async function importMapZip(file: File): Promise<ImportResult> {
+  const { default: JSZip } = await import('jszip');
   const zip = await JSZip.loadAsync(await file.arrayBuffer());
 
   const manifestFile = zip.file('manifest.json');
